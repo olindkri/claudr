@@ -93,7 +93,7 @@ In the picker:
 
 Built-in name aliases (for `-m`): `kimi`, `kimi-thinking`, `sonnet`, `opus`,
 `haiku`, `deepseek`, `deepseek-flash`, `glm`, `qwen`, `qwen-coder`, `gemma`,
-`gemini`, `minimax`, `grok`, `grok-code`, `gpt`, `hy3`. Anything else is
+`gemini`, `minimax`, `grok`, `gpt`, `hy3`. Anything else is
 passed through as a literal OpenRouter model slug.
 
 ## Uninstall
