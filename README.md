@@ -1,13 +1,32 @@
 # openrouter-claude
 
-A `claude` launcher that routes Claude Code through OpenRouter — same idea as
-Ollama's `claude` integration, but for any model on OpenRouter.
+**The simplest way to run Claude Code with any OpenRouter model.**
 
-When you run it without `-m`, it pulls OpenRouter's **live programming
-leaderboard** (https://openrouter.ai/rankings/programming) and shows the
-top models in an arrow-key picker with name, context, price, and a
-description from the OpenRouter catalog. No hardcoded list — it always
-reflects what's currently popular on OpenRouter.
+One command, one key, one picker. Pick a model — Sonnet, Opus, Kimi K2,
+DeepSeek V4, GPT-5, Gemini, Grok, anything on OpenRouter — and Claude Code
+launches against it. No proxy, no config file, no per-model setup.
+
+```
+openrouter-claude
+```
+
+That's it. You get the full Claude Code experience (slash commands, MCP,
+tool use, `/resume`, the lot) talking to whichever frontier model you
+picked, billed through your OpenRouter account.
+
+Without `-m`, the launcher pulls OpenRouter's **live programming leaderboard**
+(https://openrouter.ai/rankings/programming) and opens a polished `fzf`
+picker showing the top models with context, input/output price, and a
+description from the OpenRouter catalog. Fuzzy-search the entire catalog
+from the same prompt — no hardcoded list, always live.
+
+### Why this exists
+
+Claude Code's official setup only points at Anthropic. Pointing it at
+OpenRouter unlocks every model on the platform with the same UX you
+already know — but the env-var dance, model-slug guessing, context-window
+quirks, and missing web search are tedious to wire up by hand. This
+launcher does all of it in one binary you install with one curl command.
 
 ---
 
@@ -194,5 +213,5 @@ manually every 10–15 turns or restart the session.
 - The leaderboard reflects **all** OpenRouter programming traffic — popularity
   ≠ quality. Top entries skew toward cheap/fast models (Gemini Flash, GPT-4o
   mini). Use `--view month` for a steadier signal, or just type a slug.
-- Pricing shown is `prompt` USD per million tokens; output tokens cost more.
-  See https://openrouter.ai/models for the full sheet.
+- Pricing shown is USD per million tokens for both input and output. See
+  https://openrouter.ai/models for the full sheet.
