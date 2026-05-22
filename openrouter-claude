@@ -458,7 +458,7 @@ fzf_pick() {
     --border-label-pos=3 \
     --pointer='▶' \
     --marker=' ' \
-    --prompt='  search › ' \
+    --prompt=' search › ' \
     --header=$'  ↑↓ navigate   ⏎ launch   ⌃A change key   esc cancel\n' \
     --header-first \
     --info=inline-right \
@@ -468,9 +468,11 @@ fzf_pick() {
     --expect=ctrl-a \
     --delimiter=$'\t' \
     --with-nth=2 \
-    --preview-window='right,38%,wrap,border-left' \
+    --preview-window='right,34%,wrap,border-left' \
+    --preview-label=' details ' \
+    --preview-label-pos=3 \
     --preview="printf '%b' {3}" \
-    --color='border:cyan:dim,label:cyan:bold,header:dim,prompt:cyan:bold,pointer:cyan:bold,marker:cyan,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold,hl:cyan,info:dim,separator:dim,preview-border:cyan:dim'
+    --color='border:cyan:dim,label:cyan:bold,header:dim,prompt:cyan:bold,pointer:cyan:bold,marker:cyan,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold,hl:cyan,info:dim,separator:cyan:dim,preview-border:cyan:dim,preview-label:cyan:bold'
 import sys
 B="\033[1m"; C="\033[36m"; D="\033[2m"; Y="\033[33m"; G="\033[32m"; W="\033[97m"; R="\033[0m"
 def fmt_ctx(ctx):
@@ -488,14 +490,14 @@ with open(sys.argv[1]) as f:
         cid, ctx, price, name, rank, tokens, desc, price_out = parts[:8]
         if not price_out: price_out = "0.00"
         ctxs = fmt_ctx(ctx)
-        rank_s  = f"#{rank}" if rank and rank != "-" else " ·"
-        price_pair = f"${price}/${price_out}"
+        rank_s  = f"#{rank}" if rank and rank != "-" else ""
+        price_pair = f"${price} / ${price_out}"
         # one-line row: rank · id · ctx · in/out price per million
         row = (
-            f"  {D}{rank_s:>4}{R}   "
-            f"{C}{cid:<40}{R}  "
+            f" {D}{rank_s:>4}{R}  "
+            f"{C}{cid:<42}{R}  "
             f"{D}{ctxs:>5} ctx{R}   "
-            f"{W}{price_pair:>14}{R} {D}/M in·out{R}"
+            f"{W}{price_pair:>17}{R} {D}/M{R}"
         )
         # preview pane (right side): name, full description, stats
         tok_line = f"\\n  {D}usage{R}    {tokens} tokens (programming rank #{rank})" if tokens and tokens != "-" else ""
