@@ -1,4 +1,4 @@
-# openrouter-claude
+# claudr
 
 **The simplest way to run Claude Code with any OpenRouter model.**
 
@@ -7,7 +7,7 @@ DeepSeek V4, GPT-5, Gemini, Grok, anything on OpenRouter — and Claude Code
 launches against it. No proxy, no config file, no per-model setup.
 
 ```
-openrouter-claude
+claudr
 ```
 
 That's it. You get the full Claude Code experience (slash commands, MCP,
@@ -35,30 +35,30 @@ launcher does all of it in one binary you install with one curl command.
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/olindkri/openrouter-claude/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/olindkri/claudr/main/install.sh | bash
 ```
 
-The installer auto-clones the repo to `~/.openrouter-claude`, symlinks
-`openrouter-claude` into the first writable PATH dir (Homebrew's `bin`,
+The installer auto-clones the repo to `~/.claudr`, symlinks
+`claudr` into the first writable PATH dir (Homebrew's `bin`,
 `/usr/local/bin`, or `~/.local/bin`), and offers to install `fzf`. Re-run
 the same command later to update.
 
 ### Windows (PowerShell)
 
 ```powershell
-$d="$env:TEMP\orc-src"; if(Test-Path $d){rm -r -fo $d}; git clone --depth 1 https://github.com/olindkri/openrouter-claude $d; & "$d\install.ps1"; rm -r -fo $d
+$d="$env:TEMP\orc-src"; if(Test-Path $d){rm -r -fo $d}; git clone --depth 1 https://github.com/olindkri/claudr $d; & "$d\install.ps1"; rm -r -fo $d
 ```
 
 Zip-only fallback (no `git` required):
 
 ```powershell
-$z="$env:TEMP\orc.zip"; $d="$env:TEMP\orc-src"; if(Test-Path $d){rm -r -fo $d}; iwr -useb https://github.com/olindkri/openrouter-claude/archive/refs/heads/main.zip -OutFile $z; Expand-Archive -Force $z $d; & "$d\openrouter-claude-main\install.ps1"; rm -r -fo $d,$z
+$z="$env:TEMP\orc.zip"; $d="$env:TEMP\orc-src"; if(Test-Path $d){rm -r -fo $d}; iwr -useb https://github.com/olindkri/claudr/archive/refs/heads/main.zip -OutFile $z; Expand-Archive -Force $z $d; & "$d\claudr-main\install.ps1"; rm -r -fo $d,$z
 ```
 
-After install, open a **new** terminal and run `openrouter-claude`. First
+After install, open a **new** terminal and run `claudr`. First
 launch prompts for an OpenRouter API key (https://openrouter.ai/keys) and
-saves it to `~/.config/openrouter-claude/key` (Mac/Linux) or
-`%USERPROFILE%\.openrouter-claude\key` (Windows).
+saves it to `~/.config/claudr/key` (Mac/Linux) or
+`%USERPROFILE%\.claudr\key` (Windows).
 
 ---
 
@@ -93,15 +93,15 @@ context length, and price from the catalog. Both feeds are cached for 6h.
 ## Usage
 
 ```bash
-openrouter-claude                          # arrow-key picker (top 25 from leaderboard)
-openrouter-claude --list -n 50             # print top 50 as a table, exit
-openrouter-claude --view month             # ranking window: day | week | month | trending
-openrouter-claude --refresh                # bypass 6h cache
-openrouter-claude --list-all               # dump every OpenRouter model
+claudr                          # arrow-key picker (top 25 from leaderboard)
+claudr --list -n 50             # print top 50 as a table, exit
+claudr --view month             # ranking window: day | week | month | trending
+claudr --refresh                # bypass 6h cache
+claudr --list-all               # dump every OpenRouter model
 
-openrouter-claude -m kimi                  # alias -> moonshotai/kimi-k2.6
-openrouter-claude -m moonshotai/kimi-k2.6  # full slug
-openrouter-claude -- --resume              # forward flags to `claude`
+claudr -m kimi                  # alias -> moonshotai/kimi-k2.6
+claudr -m moonshotai/kimi-k2.6  # full slug
+claudr -- --resume              # forward flags to `claude`
 ```
 
 In the picker:
@@ -120,22 +120,22 @@ passed through as a literal OpenRouter model slug.
 **macOS / Linux** — remove the symlink and source clone:
 
 ```bash
-rm -f "$(command -v openrouter-claude)" ~/.config/openrouter-claude/key
-# if you cloned to ~/.openrouter-claude:
-rm -rf ~/.openrouter-claude
+rm -f "$(command -v claudr)" ~/.config/claudr/key
+# if you cloned to ~/.claudr:
+rm -rf ~/.claudr
 ```
 
 **Windows:**
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\openrouter-claude\install.ps1" -Uninstall
+& "$env:LOCALAPPDATA\Programs\claudr\install.ps1" -Uninstall
 ```
 
 ## Web search (Tavily, scoped to this launcher)
 
 Claude Code's built-in `WebSearch` tool runs server-side on Anthropic's
 infrastructure, so it doesn't work on OpenRouter models. The launcher
-fixes this by **injecting Tavily as an MCP server only for openrouter-claude
+fixes this by **injecting Tavily as an MCP server only for claudr
 launches** — passed via `--mcp-config`, never registered globally. Other
 `claude` invocations on the same machine (Ollama's launcher, plain
 `claude`, etc.) see no Tavily and use whatever search they had configured.
@@ -148,16 +148,16 @@ On first launch you'll be prompted for a Tavily API key:
 
 Free tier is **1000 queries/month** with no per-second rate cap.
 
-Under the hood: the key is saved to `~/.openrouter-claude/tavily-key`,
-and on every launch the launcher writes `~/.openrouter-claude/mcp.json`
+Under the hood: the key is saved to `~/.claudr/tavily-key`,
+and on every launch the launcher writes `~/.claudr/mcp.json`
 pointing at Tavily's hosted remote MCP (`https://mcp.tavily.com/mcp/?tavilyApiKey=...`)
 and passes that file via `claude --mcp-config`. The launcher also passes
 `--disallowedTools WebSearch` so the model can't pick the no-op
 Anthropic tool over Tavily.
 
 **Skip / set later:** press Enter at the prompt to skip — search just
-won't be available in openrouter-claude sessions until you set a key.
-**Rotate:** edit or delete `~/.openrouter-claude/tavily-key` and re-launch.
+won't be available in claudr sessions until you set a key.
+**Rotate:** edit or delete `~/.claudr/tavily-key` and re-launch.
 
 ## Context window on non-Anthropic models
 
@@ -176,7 +176,7 @@ The launcher picks the **real window** by default:
 If you'd rather have auto-compaction back (at the cost of a 200K cap):
 
 ```bash
-OPENROUTER_CLAUDE_AUTOCOMPACT=1 openrouter-claude
+CLAUDR_AUTOCOMPACT=1 claudr
 ```
 
 That sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` and skips `DISABLE_COMPACT`,
@@ -199,7 +199,7 @@ env vars before exec'ing `claude`:
   the default ~92%, since alternative models pollute context faster.
 
 Override either by setting the env var yourself before running
-`openrouter-claude`. If you're hitting context walls anyway, run `/compact`
+`claudr`. If you're hitting context walls anyway, run `/compact`
 manually every 10–15 turns or restart the session.
 
 ## Caveats

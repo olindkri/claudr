@@ -1,24 +1,24 @@
-﻿# install.ps1 — install openrouter-claude on Windows so it runs from any terminal.
+﻿# install.ps1 — install claudr on Windows so it runs from any terminal.
 #
-# Copies openrouter-claude.ps1 and openrouter-claude.cmd into a per-user install
+# Copies claudr.ps1 and claudr.cmd into a per-user install
 # directory and adds that directory to the User PATH. Idempotent — re-run to update.
 #
 # Usage:
 #   pwsh -ExecutionPolicy Bypass -File .\install.ps1
-#   pwsh -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir "C:\Tools\openrouter-claude"
+#   pwsh -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir "C:\Tools\claudr"
 #   pwsh -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
 
 [CmdletBinding()]
 param(
-  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\openrouter-claude'),
+  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\claudr'),
   [switch]$Uninstall,
   [switch]$NoFzfPrompt
 )
 
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
-$psFile  = Join-Path $src 'openrouter-claude.ps1'
-$cmdFile = Join-Path $src 'openrouter-claude.cmd'
+$psFile  = Join-Path $src 'claudr.ps1'
+$cmdFile = Join-Path $src 'claudr.cmd'
 
 function Add-ToUserPath([string]$dir) {
   $current = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -45,7 +45,7 @@ function Remove-FromUserPath([string]$dir) {
 }
 
 if ($Uninstall) {
-  Write-Host "Uninstalling openrouter-claude…" -ForegroundColor Cyan
+  Write-Host "Uninstalling claudr…" -ForegroundColor Cyan
   if (Test-Path $InstallDir) {
     Remove-Item -Recurse -Force $InstallDir
     Write-Host "  Removed: $InstallDir" -ForegroundColor Yellow
@@ -59,14 +59,14 @@ if ($Uninstall) {
 if (-not (Test-Path $psFile))  { throw "missing source file: $psFile" }
 if (-not (Test-Path $cmdFile)) { throw "missing source file: $cmdFile" }
 
-Write-Host "Installing openrouter-claude → $InstallDir" -ForegroundColor Cyan
+Write-Host "Installing claudr → $InstallDir" -ForegroundColor Cyan
 
 # 1) copy files
 if (-not (Test-Path $InstallDir)) {
   New-Item -ItemType Directory -Path $InstallDir | Out-Null
 }
-Copy-Item -Force $psFile  (Join-Path $InstallDir 'openrouter-claude.ps1')
-Copy-Item -Force $cmdFile (Join-Path $InstallDir 'openrouter-claude.cmd')
+Copy-Item -Force $psFile  (Join-Path $InstallDir 'claudr.ps1')
+Copy-Item -Force $cmdFile (Join-Path $InstallDir 'claudr.cmd')
 Write-Host "  Copied launcher files" -ForegroundColor Green
 
 # 2) PATH
@@ -112,7 +112,7 @@ if (-not $NoFzfPrompt -and -not (Get-Command fzf -ErrorAction SilentlyContinue))
 Write-Host ""
 Write-Host "Installed." -ForegroundColor Cyan
 Write-Host "Open a NEW terminal (cmd, PowerShell, or Windows Terminal) and run:" -ForegroundColor Cyan
-Write-Host "    openrouter-claude" -ForegroundColor White
+Write-Host "    claudr" -ForegroundColor White
 Write-Host ""
 Write-Host "On first run it will prompt for two keys:" -ForegroundColor DarkGray
 Write-Host "  - OpenRouter API key (required) - https://openrouter.ai/keys" -ForegroundColor DarkGray

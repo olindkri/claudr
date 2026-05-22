@@ -1,14 +1,14 @@
-﻿# openrouter-claude.ps1 — launch Claude Code routed through OpenRouter,
+﻿# claudr.ps1 — launch Claude Code routed through OpenRouter,
 # with a model picker driven by OpenRouter's live programming leaderboard.
 #
 # Usage:
-#   openrouter-claude
-#   openrouter-claude -Model kimi
-#   openrouter-claude -Model moonshotai/kimi-k2.6 -- --resume
-#   openrouter-claude -List
-#   openrouter-claude -List -Top 50
-#   openrouter-claude -View month
-#   openrouter-claude -Refresh
+#   claudr
+#   claudr -Model kimi
+#   claudr -Model moonshotai/kimi-k2.6 -- --resume
+#   claudr -List
+#   claudr -List -Top 50
+#   claudr -View month
+#   claudr -Refresh
 
 [CmdletBinding()]
 param(
@@ -22,7 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ConfigDir   = Join-Path $env:USERPROFILE '.openrouter-claude'
+$ConfigDir   = Join-Path $env:USERPROFILE '.claudr'
 $KeyFile     = Join-Path $ConfigDir 'key'
 $ModelsCache = Join-Path $ConfigDir 'models.json'
 $RankCache   = Join-Path $ConfigDir "rankings.v2.$View.tsv"
@@ -30,7 +30,7 @@ if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir
 
 # --- per-launch Tavily MCP config (NOT registered at user scope) ---
 # Anthropic's WebSearch only works on its first-party endpoint, not via OpenRouter.
-# We inject Tavily as an MCP via --mcp-config only for openrouter-claude launches —
+# We inject Tavily as an MCP via --mcp-config only for claudr launches —
 # never globally — so other `claude` invocations (ollama's launcher, plain `claude`,
 # etc.) are unaffected.
 # Free tier: 1000 queries/mo, no per-second cap.
@@ -96,7 +96,7 @@ if ($key) {
 function Read-AndSaveApiKey {
   param([switch]$Rotate)
   if (-not [Environment]::UserInteractive) {
-    Write-Error "openrouter-claude: no OpenRouter key. Set `$env:OPENROUTER_API_KEY or write $KeyFile"
+    Write-Error "claudr: no OpenRouter key. Set `$env:OPENROUTER_API_KEY or write $KeyFile"
     exit 1
   }
   $title   = if ($Rotate) { 'Change OpenRouter API key' } else { 'Set OpenRouter API key' }
@@ -428,7 +428,7 @@ if (-not $Model) {
     if (Get-Command fzf -ErrorAction SilentlyContinue) {
       while ($true) {
         Write-Host ""
-        Write-Host "  openrouter-claude" -ForegroundColor White
+        Write-Host "  claudr" -ForegroundColor White
         Write-Host "  Live programming rankings · view: $View · top $Top" -ForegroundColor DarkGray
         Write-Host "  ────────────────────────────────────────────────────" -ForegroundColor DarkGray
         Write-Host ""
@@ -460,11 +460,11 @@ if (-not $Model) {
 $Model = Resolve-Model $Model
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-  Write-Error "openrouter-claude: 'claude' CLI not found. Install: npm i -g @anthropic-ai/claude-code"
+  Write-Error "claudr: 'claude' CLI not found. Install: npm i -g @anthropic-ai/claude-code"
   exit 1
 }
 
-Write-Host "openrouter-claude -> model=$Model  endpoint=https://openrouter.ai/api" -ForegroundColor Cyan
+Write-Host "claudr -> model=$Model  endpoint=https://openrouter.ai/api" -ForegroundColor Cyan
 
 $env:ANTHROPIC_BASE_URL   = 'https://openrouter.ai/api'
 $env:ANTHROPIC_AUTH_TOKEN = $Key
@@ -476,7 +476,7 @@ if (-not $env:ANTHROPIC_SMALL_FAST_MODEL) { $env:ANTHROPIC_SMALL_FAST_MODEL = $M
 # the context window to a hardcoded 200K regardless of the actual model.
 # CLAUDE_CODE_MAX_CONTEXT_TOKENS only applies when DISABLE_COMPACT=1 is also set.
 # Default: disable auto-compaction, expose real window from catalog. Opt back to
-# auto-compact at 75% of 200K with $env:OPENROUTER_CLAUDE_AUTOCOMPACT = '1'.
+# auto-compact at 75% of 200K with $env:CLAUDR_AUTOCOMPACT = '1'.
 $ModelCtx = 200000
 $foundCtx = 0
 if (Test-Path $RankCache) {
@@ -492,20 +492,20 @@ if ($foundCtx -le 0 -and (Test-Path $ModelsCache)) {
 }
 if ($foundCtx -gt 0) { $ModelCtx = $foundCtx }
 
-if ($env:OPENROUTER_CLAUDE_AUTOCOMPACT -eq '1') {
+if ($env:CLAUDR_AUTOCOMPACT -eq '1') {
   if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '75' }
-  Write-Host "openrouter-claude: auto-compact ON (window pinned at CC's default ~200K, compact at $($env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)%)" -ForegroundColor DarkGray
+  Write-Host "claudr: auto-compact ON (window pinned at CC's default ~200K, compact at $($env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)%)" -ForegroundColor DarkGray
 } else {
   if (-not $env:DISABLE_COMPACT) { $env:DISABLE_COMPACT = '1' }
   if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS) { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
-  Write-Host "openrouter-claude: context window = $ModelCtx tokens. auto-compact OFF (run /compact manually; set OPENROUTER_CLAUDE_AUTOCOMPACT=1 to re-enable)" -ForegroundColor DarkGray
+  Write-Host "claudr: context window = $ModelCtx tokens. auto-compact OFF (run /compact manually; set CLAUDR_AUTOCOMPACT=1 to re-enable)" -ForegroundColor DarkGray
 }
 
 # Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
 # (Anthropic-only beta capability), and if it's visible the model picks it over
-# the Tavily MCP we register. Opt out with $env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH = '1'.
+# the Tavily MCP we register. Opt out with $env:CLAUDR_ALLOW_WEBSEARCH = '1'.
 $DisallowArgs = @()
-if ($env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH -ne '1') {
+if ($env:CLAUDR_ALLOW_WEBSEARCH -ne '1') {
   $DisallowArgs = @('--disallowedTools','WebSearch')
 }
 
@@ -516,8 +516,8 @@ if (Test-Path $McpConfigFile) {
   $McpArgs = @('--mcp-config', $McpConfigFile)
 }
 
-# Pass --dangerously-skip-permissions by default. Opt out with $env:OPENROUTER_CLAUDE_SAFE = '1'.
-if ($env:OPENROUTER_CLAUDE_SAFE -eq '1') {
+# Pass --dangerously-skip-permissions by default. Opt out with $env:CLAUDR_SAFE = '1'.
+if ($env:CLAUDR_SAFE -eq '1') {
   & claude @DisallowArgs @McpArgs @Rest
 } else {
   & claude --dangerously-skip-permissions @DisallowArgs @McpArgs @Rest
