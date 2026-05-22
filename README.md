@@ -112,36 +112,113 @@ an OpenRouter slug of your choice via env vars
 ([`ANTHROPIC_DEFAULT_OPUS_MODEL`](https://code.claude.com/docs/en/model-config),
 `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`).
 
-**First launch** runs a one-time wizard: pick your **opus** (main), **sonnet**,
-and **haiku** models from the fzf picker. The result is saved to
-`~/.config/claudr/tiers.conf` and reused on every subsequent launch — no more
-picking. Re-run `claudr --tiers` any time to change them.
+The **opus** tier is also the **main** model — what your session runs on by
+default. The other two only activate when Claude Code dispatches a subagent
+at that tier, or when you type `/model sonnet` or `/model haiku` mid-session.
 
-Example config:
+#### First launch: the setup wizard
+
+The first time you run `claudr`, it opens a 3-pick wizard in the fzf picker:
 
 ```
+╭─ claudr · 1/3 · OPUS (main) ─────────────────────────────────────────╮
+│   ↑↓ navigate   ⏎ confirm   ⌃A change key   esc cancel               │
+│   search ›                                                            │
+│ ▶ #1   qwen/qwen3.7-max          1M ctx     $4.00 / $20.00 /M        │
+│   #2   anthropic/claude-opus-4.7 1M ctx     $5.00 / $25.00 /M        │
+│   ...                                                                 │
+╰───────────────────────────────────────────────────────────────────────╯
+```
+
+1. **Screen 1 of 3 — OPUS (main)**: pick your default model. This is what
+   every session runs on unless Claude Code routes elsewhere.
+2. **Screen 2 of 3 — SONNET**: pick your mid-tier subagent model. Used when
+   an agent file says `model: sonnet` or `/model sonnet` is typed.
+3. **Screen 3 of 3 — HAIKU**: pick your fast/background model. Used for
+   compaction, title generation, file searches, and `model: haiku` subagents.
+
+Picks are saved to **`~/.config/claudr/tiers.conf`** and reused on every
+subsequent launch — no more pickers, instant start.
+
+#### Re-running the wizard
+
+```bash
+claudr --tiers
+```
+
+Reopens the same 3-pick flow and overwrites your saved config. Use it
+whenever you want to swap tiers around. Pressing **Esc** on any of the
+three screens cancels without changing anything.
+
+#### Manual editing
+
+You can edit `~/.config/claudr/tiers.conf` directly with any text editor.
+It's plain shell-source format:
+
+```
+# claudr tier config — what each Claude Code model alias resolves to.
 OPUS=qwen/qwen3.7-max
 SONNET=moonshotai/kimi-k2.6
 HAIKU=deepseek/deepseek-v4-flash
 ```
 
-Inside Claude Code, `/model opus` upshifts to OPUS, `/model sonnet` switches
-to SONNET, etc. — the aliases resolve through claudr's mapping instead of
-Anthropic's defaults.
+Any OpenRouter slug works. If you typo a slug, claudr warns you on next
+launch and points to `claudr --tiers` to fix it.
 
-### Per-launch overrides
+#### Mid-session switching
 
-| Env var               | Effect                                            |
-|-----------------------|---------------------------------------------------|
-| `CLAUDR_OPUS_MODEL`   | Override opus tier for this launch only           |
-| `CLAUDR_SONNET_MODEL` | Override sonnet tier for this launch only         |
-| `CLAUDR_HAIKU_MODEL`  | Override haiku tier for this launch only          |
-| `-m <slug>`           | Override main model only; tier mapping unchanged  |
+Inside Claude Code:
 
-### In the picker
+- `/model opus` → switches to your OPUS slug
+- `/model sonnet` → switches to your SONNET slug
+- `/model haiku` → switches to your HAIKU slug
+- `/model` (no arg) → opens Claude Code's own picker, where you'll also
+  see whatever main model claudr launched you with
+
+Subagents declared with `model: opus|sonnet|haiku` in their frontmatter
+get routed automatically — you don't need to switch manually.
+
+#### Per-launch overrides (skip the saved config)
+
+| Override                                | Effect                                          |
+|-----------------------------------------|-------------------------------------------------|
+| `CLAUDR_OPUS_MODEL=<slug> claudr`       | Override opus tier for this launch only         |
+| `CLAUDR_SONNET_MODEL=<slug> claudr`     | Override sonnet tier for this launch only       |
+| `CLAUDR_HAIKU_MODEL=<slug> claudr`      | Override haiku tier for this launch only        |
+| `claudr -m <slug>`                      | Override main model only; tiers stay as configured |
+
+You can combine them. Example: run with your saved config but swap opus
+to GPT-5 for a one-off session:
+
+```bash
+CLAUDR_OPUS_MODEL=openai/gpt-5 claudr
+```
+
+Example: run main on Kimi but keep tier routing intact (so subagents still
+go to your saved opus/sonnet/haiku):
+
+```bash
+claudr -m kimi
+```
+
+#### Other configurable options
+
+| Setting                            | Default        | What it does                                                                |
+|------------------------------------|----------------|-----------------------------------------------------------------------------|
+| `OPENROUTER_RANK_VIEW` env var     | `week`         | Leaderboard window for the picker (`day` / `week` / `month` / `trending`)   |
+| `OPENROUTER_TOP_N` env var         | `25`           | How many ranked models appear above the full catalog in the picker          |
+| `--view <window>`                  | —              | Same as `OPENROUTER_RANK_VIEW`, per-launch                                  |
+| `-n <N>` / `--top <N>`             | —              | Same as `OPENROUTER_TOP_N`, per-launch                                      |
+| `--refresh`                        | —              | Bypass the 6h leaderboard/catalog cache for this launch                     |
+| `CLAUDR_AUTOCOMPACT=1` env var     | off            | Re-enable Claude Code's auto-compaction (pins window at 200K — see below)   |
+| `CLAUDR_SAFE=1` env var            | off            | Don't pass `--dangerously-skip-permissions` to claude                       |
+| `CLAUDR_ALLOW_WEBSEARCH=1` env var | off            | Don't pass `--disallowedTools WebSearch` (lets the no-op tool show up)      |
+| `TAVILY_API_KEY` env var           | —              | Use this Tavily key for the web-search MCP instead of the saved file       |
+
+#### In the picker / wizard
 
 - **↑↓** to move, **Enter** to confirm, **Esc** to cancel
-- Type to filter the list (fuzzy match)
+- Type to fuzzy-filter the list
 - **Ctrl+A** to change your OpenRouter API key without leaving the picker
 
 Built-in name aliases (for `-m` and inside the wizard): `kimi`, `kimi-thinking`,
