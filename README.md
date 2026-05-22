@@ -93,26 +93,60 @@ context length, and price from the catalog. Both feeds are cached for 6h.
 ## Usage
 
 ```bash
-claudr                          # arrow-key picker (top 25 from leaderboard)
+claudr                          # launch with your saved tier config (first run: setup wizard)
+claudr --tiers                  # re-pick the 3 tier models (opus/sonnet/haiku)
+claudr -m kimi                  # override only the main model for this launch
 claudr --list -n 50             # print top 50 as a table, exit
 claudr --view month             # ranking window: day | week | month | trending
 claudr --refresh                # bypass 6h cache
 claudr --list-all               # dump every OpenRouter model
-
-claudr -m kimi                  # alias -> moonshotai/kimi-k2.6
-claudr -m moonshotai/kimi-k2.6  # full slug
 claudr -- --resume              # forward flags to `claude`
 ```
 
-In the picker:
+### Three-tier model setup
 
-- **↑↓** to move, **Enter** to launch, **Esc** to cancel
+Claude Code uses three model aliases — `opus`, `sonnet`, `haiku` — and routes
+subagents and background tasks (compaction, title generation, file searches)
+through whichever one their frontmatter declares. claudr maps each alias to
+an OpenRouter slug of your choice via env vars
+([`ANTHROPIC_DEFAULT_OPUS_MODEL`](https://code.claude.com/docs/en/model-config),
+`ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`).
+
+**First launch** runs a one-time wizard: pick your **opus** (main), **sonnet**,
+and **haiku** models from the fzf picker. The result is saved to
+`~/.config/claudr/tiers.conf` and reused on every subsequent launch — no more
+picking. Re-run `claudr --tiers` any time to change them.
+
+Example config:
+
+```
+OPUS=qwen/qwen3.7-max
+SONNET=moonshotai/kimi-k2.6
+HAIKU=deepseek/deepseek-v4-flash
+```
+
+Inside Claude Code, `/model opus` upshifts to OPUS, `/model sonnet` switches
+to SONNET, etc. — the aliases resolve through claudr's mapping instead of
+Anthropic's defaults.
+
+### Per-launch overrides
+
+| Env var               | Effect                                            |
+|-----------------------|---------------------------------------------------|
+| `CLAUDR_OPUS_MODEL`   | Override opus tier for this launch only           |
+| `CLAUDR_SONNET_MODEL` | Override sonnet tier for this launch only         |
+| `CLAUDR_HAIKU_MODEL`  | Override haiku tier for this launch only          |
+| `-m <slug>`           | Override main model only; tier mapping unchanged  |
+
+### In the picker
+
+- **↑↓** to move, **Enter** to confirm, **Esc** to cancel
 - Type to filter the list (fuzzy match)
 - **Ctrl+A** to change your OpenRouter API key without leaving the picker
 
-Built-in name aliases (for `-m`): `kimi`, `kimi-thinking`, `sonnet`, `opus`,
-`haiku`, `deepseek`, `deepseek-flash`, `glm`, `qwen`, `qwen-coder`, `gemma`,
-`gemini`, `minimax`, `grok`, `gpt`, `hy3`. Anything else is
+Built-in name aliases (for `-m` and inside the wizard): `kimi`, `kimi-thinking`,
+`sonnet`, `opus`, `haiku`, `deepseek`, `deepseek-flash`, `glm`, `qwen`,
+`qwen-coder`, `gemma`, `gemini`, `minimax`, `grok`, `gpt`. Anything else is
 passed through as a literal OpenRouter model slug.
 
 ## Uninstall

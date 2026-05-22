@@ -4,14 +4,21 @@
 # (https://openrouter.ai/rankings/programming).
 #
 # Usage:
-#   claudr                       # interactive picker (top N from leaderboard)
-#   claudr -m kimi               # short alias
+#   claudr                       # launch with saved tier config (first run: setup wizard)
+#   claudr --tiers               # re-run the 3-pick wizard to change tier config
+#   claudr -m kimi               # override only the main model for this launch
 #   claudr -m moonshotai/kimi-k2.6
 #   claudr --list                # print top N, exit
 #   claudr --list -n 50          # top 50
 #   claudr --view month          # ranking window: day|week|month|trending
 #   claudr --refresh             # bypass 6h cache
 #   claudr -- <claude args...>   # forward flags to claude
+#
+# Tier config (~/.config/claudr/tiers.conf) maps Claude Code's model aliases:
+#   OPUS    -> ANTHROPIC_DEFAULT_OPUS_MODEL    (also the main session model)
+#   SONNET  -> ANTHROPIC_DEFAULT_SONNET_MODEL  (subagent / mid-tier)
+#   HAIKU   -> ANTHROPIC_DEFAULT_HAIKU_MODEL   (subagent / fast / background)
+# Per-launch overrides: CLAUDR_OPUS_MODEL / CLAUDR_SONNET_MODEL / CLAUDR_HAIKU_MODEL
 #
 # Key resolution order:
 #   1. $OPENROUTER_API_KEY env var
@@ -23,6 +30,7 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudr"
 KEY_FILE="$CONFIG_DIR/key"
 RANK_CACHE="$CONFIG_DIR/rankings.tsv"
 MODELS_CACHE="$CONFIG_DIR/models.json"
+TIERS_FILE="$CONFIG_DIR/tiers.conf"
 
 # --- key prompt/save: factored so the picker can re-invoke it on Ctrl+A ---
 # $1 = "missing" (first-time prompt) | "rotate" (replace existing)
@@ -197,10 +205,12 @@ LIST_MODE=""
 RANK_VIEW="${OPENROUTER_RANK_VIEW:-week}"
 TOP_N="${OPENROUTER_TOP_N:-25}"
 REFRESH=0
+TIERS_WIZARD=0
 PASSTHRU=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -m|--model)   MODEL="$2"; shift 2 ;;
+    --tiers)      TIERS_WIZARD=1; shift ;;
     --list)       LIST_MODE="ranked"; shift ;;
     --list-all)   LIST_MODE="all"; shift ;;
     --view)       RANK_VIEW="$2"; shift 2 ;;
@@ -442,6 +452,8 @@ print_table() {
 
 # fzf-based interactive picker — full-screen, alternate-screen, wipes on exit.
 # $1 = TSV file with rows: id\tctx\tprice\tname\trank\ttokens\tdesc
+# $2 = tier label shown in the border, e.g. "OPUS (main)"  (optional)
+# $3 = step indicator shown in the border, e.g. "1/3"      (optional)
 # Returns selected model id on stdout (or empty if cancelled).
 #
 # Layout: bordered full-screen panel, one row per model, side preview pane.
@@ -450,16 +462,24 @@ print_table() {
 # text with literal "\n" sequences expanded by printf '%b' in --preview.
 fzf_pick() {
   local tsv="$1"
+  local tier_label="${2:-model picker}"
+  local step_label="${3:-}"
+  local border_text
+  if [ -n "$step_label" ]; then
+    border_text=" claudr · $step_label · $tier_label "
+  else
+    border_text=" claudr · $tier_label "
+  fi
   python3 - "$tsv" <<'PY' | fzf \
     --ansi \
     --reverse \
     --border=rounded \
-    --border-label=' claudr · model picker ' \
+    --border-label="$border_text" \
     --border-label-pos=3 \
     --pointer='▶' \
     --marker=' ' \
     --prompt=' search › ' \
-    --header=$'  ↑↓ navigate   ⏎ launch   ⌃A change key   esc cancel\n' \
+    --header=$'  ↑↓ navigate   ⏎ confirm   ⌃A change key   esc cancel\n' \
     --header-first \
     --info=inline-right \
     --no-scrollbar \
@@ -517,6 +537,130 @@ with open(sys.argv[1]) as f:
 PY
 }
 
+# --- tier config: persistent opus/sonnet/haiku mapping ---
+# Loads OPUS/SONNET/HAIKU from $TIERS_FILE. Returns 1 if file missing or
+# any value blank.
+load_tiers() {
+  [ -f "$TIERS_FILE" ] || return 1
+  unset OPUS SONNET HAIKU
+  # shellcheck source=/dev/null
+  . "$TIERS_FILE" 2>/dev/null || return 1
+  [ -n "${OPUS:-}" ] && [ -n "${SONNET:-}" ] && [ -n "${HAIKU:-}" ] || return 1
+  OPUS_MODEL="$OPUS"; SONNET_MODEL="$SONNET"; HAIKU_MODEL="$HAIKU"
+  return 0
+}
+
+# Writes the current OPUS_MODEL/SONNET_MODEL/HAIKU_MODEL to $TIERS_FILE.
+save_tiers() {
+  mkdir -p "$CONFIG_DIR"
+  umask 077
+  cat > "$TIERS_FILE" <<EOF
+# claudr tier config — what each Claude Code model alias resolves to.
+# OPUS    = main session model + the 'opus' alias for subagents
+# SONNET  = the 'sonnet' alias for subagents / mid-tier work
+# HAIKU   = the 'haiku' alias for subagents / background / fast tasks
+# Edit by hand, or re-run: claudr --tiers
+OPUS=$OPUS_MODEL
+SONNET=$SONNET_MODEL
+HAIKU=$HAIKU_MODEL
+EOF
+}
+
+# Warns (does not fail) if any tier slug is missing from the OpenRouter catalog.
+validate_tiers() {
+  [ -f "$MODELS_CACHE" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local missing
+  missing="$(python3 - "$MODELS_CACHE" "$OPUS_MODEL" "$SONNET_MODEL" "$HAIKU_MODEL" <<'PY'
+import json, sys
+try:
+    ids = {x["id"] for x in json.load(open(sys.argv[1]))["data"]}
+except Exception:
+    sys.exit(0)
+for s in sys.argv[2:]:
+    if s not in ids: print(s)
+PY
+)"
+  if [ -n "$missing" ]; then
+    local Y=$'\033[33m' R=$'\033[0m'
+    echo "" >&2
+    echo "  ${Y}claudr: warning${R} — tier slug(s) not in OpenRouter catalog:" >&2
+    while IFS= read -r s; do echo "    · $s" >&2; done <<< "$missing"
+    echo "  run: ${Y}claudr --tiers${R} to fix" >&2
+    echo "" >&2
+  fi
+}
+
+# Interactive 3-pick wizard. Sets OPUS_MODEL / SONNET_MODEL / HAIKU_MODEL on
+# success. Returns 1 if the user pressed Esc on any pick.
+run_tier_wizard() {
+  command -v fzf >/dev/null 2>&1 || {
+    echo "claudr: tier wizard requires fzf (install with: brew install fzf)." >&2
+    return 1
+  }
+  local tmplist
+  tmplist="$(mktemp)"
+  fetch_combined_tsv "$RANK_VIEW" "$TOP_N" > "$tmplist"
+  if [ ! -s "$tmplist" ]; then
+    rm -f "$tmplist"
+    echo "claudr: no models available — leaderboard and catalog both empty." >&2
+    return 1
+  fi
+  local tiers=("OPUS (main)" "SONNET" "HAIKU")
+  local picks=()
+  local i=0
+  while [ $i -lt 3 ]; do
+    local label="${tiers[$i]}"
+    local step="$((i+1))/3"
+    while true; do
+      local out pressed body
+      out="$(fzf_pick "$tmplist" "$label" "$step")"
+      pressed="$(printf %s "$out" | head -n1)"
+      body="$(printf %s "$out" | tail -n +2 | head -n1 | cut -f1)"
+      if [ "$pressed" = "ctrl-a" ]; then
+        if prompt_and_save_key rotate; then
+          fetch_combined_tsv "$RANK_VIEW" "$TOP_N" > "$tmplist" || true
+        fi
+        continue
+      fi
+      if [ -z "$body" ]; then
+        rm -f "$tmplist"
+        return 1
+      fi
+      picks+=("$body")
+      break
+    done
+    i=$((i+1))
+  done
+  rm -f "$tmplist"
+  OPUS_MODEL="${picks[0]}"
+  SONNET_MODEL="${picks[1]}"
+  HAIKU_MODEL="${picks[2]}"
+  return 0
+}
+
+# --tiers — reconfigure tiers and exit
+if [ "$TIERS_WIZARD" = "1" ]; then
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    echo "claudr --tiers requires an interactive terminal." >&2
+    exit 1
+  fi
+  if run_tier_wizard; then
+    save_tiers
+    G=$'\033[32m'; D=$'\033[2m'; R=$'\033[0m'
+    echo "" >&2
+    echo "  ${G}✓${R} tier config saved to $TIERS_FILE" >&2
+    printf "    %sopus  %s  %s\n" "$D" "$R" "$OPUS_MODEL"   >&2
+    printf "    %ssonnet%s  %s\n" "$D" "$R" "$SONNET_MODEL" >&2
+    printf "    %shaiku %s  %s\n" "$D" "$R" "$HAIKU_MODEL"  >&2
+    echo "" >&2
+    exit 0
+  else
+    echo "claudr: cancelled — no changes saved." >&2
+    exit 1
+  fi
+fi
+
 if [ -n "$LIST_MODE" ]; then
   if [ "$LIST_MODE" = "all" ]; then
     list_all_tsv | print_table
@@ -528,68 +672,70 @@ if [ -n "$LIST_MODE" ]; then
   exit 0
 fi
 
-# Interactive picker if no model specified
-if [ -z "$MODEL" ]; then
-  if [ ! -t 0 ] || [ ! -t 1 ]; then
-    MODEL="moonshotai/kimi-k2.6"
-  else
-    TMPLIST="$(mktemp)"
-    fetch_combined_tsv "$RANK_VIEW" "$TOP_N" > "$TMPLIST"
-    if [ ! -s "$TMPLIST" ]; then
-      echo "claudr: no models available (leaderboard and catalog both empty); using moonshotai/kimi-k2.6" >&2
-      MODEL="moonshotai/kimi-k2.6"
-    else
-      # Offer to install fzf once (~1MB, no deps); user can decline.
-      if ! command -v fzf >/dev/null 2>&1 && [ ! -f "$CONFIG_DIR/.fzf-declined" ] && command -v brew >/dev/null 2>&1; then
-        echo "" >&2
-        echo "claudr: 'fzf' enables arrow-key model picking (recommended)." >&2
-        printf "Install fzf via Homebrew now? [Y/n]: " >&2
-        read -r INSTALL
-        case "$INSTALL" in
-          n|N|no|NO) touch "$CONFIG_DIR/.fzf-declined"; echo "  skipped (won't ask again)" >&2 ;;
-          *) brew install fzf >&2 || echo "  install failed; falling back to numbered prompt" >&2 ;;
-        esac
-      fi
+# --- tier resolution ---
+# Resolution: env var > tiers.conf > first-launch wizard > -m fanout > fallback
+OPUS_MODEL=""; SONNET_MODEL=""; HAIKU_MODEL=""
+load_tiers || true   # populates OPUS_MODEL/SONNET_MODEL/HAIKU_MODEL or leaves them blank
 
-      if command -v fzf >/dev/null 2>&1; then
-        while true; do
-          # fzf prints the pressed --expect key on line 1, then the entry; parse both.
-          PICK_OUT="$(fzf_pick "$TMPLIST")"
-          PRESSED_KEY="$(printf %s "$PICK_OUT" | head -n1)"
-          # column 1 of the selected row is the canonical model id
-          PICK_BODY="$(printf %s "$PICK_OUT" | tail -n +2 | head -n1 | cut -f1)"
-          if [ "$PRESSED_KEY" = "ctrl-a" ]; then
-            if prompt_and_save_key rotate; then
-              # Refresh leaderboard with the new key so cache reflects current account
-              fetch_combined_tsv "$RANK_VIEW" "$TOP_N" > "$TMPLIST" || true
-            fi
-            continue
-          fi
-          MODEL="$PICK_BODY"
-          break
-        done
-        [ -z "$MODEL" ] && { echo "claudr: cancelled." >&2; rm -f "$TMPLIST"; exit 0; }
-      else
-        echo "" >&2
-      print_table < "$TMPLIST"
+# Per-launch env overrides (highest precedence)
+[ -n "${CLAUDR_OPUS_MODEL:-}" ]   && OPUS_MODEL="$CLAUDR_OPUS_MODEL"
+[ -n "${CLAUDR_SONNET_MODEL:-}" ] && SONNET_MODEL="$CLAUDR_SONNET_MODEL"
+[ -n "${CLAUDR_HAIKU_MODEL:-}" ]  && HAIKU_MODEL="$CLAUDR_HAIKU_MODEL"
+
+# Still missing any tier? Either run the wizard (interactive), fan out -m, or fall back.
+if [ -z "$OPUS_MODEL" ] || [ -z "$SONNET_MODEL" ] || [ -z "$HAIKU_MODEL" ]; then
+  if [ -n "$MODEL" ]; then
+    # -m given without saved config: use the slug for every tier.
+    fanout="$(resolve_model "$MODEL")"
+    [ -z "$OPUS_MODEL" ]   && OPUS_MODEL="$fanout"
+    [ -z "$SONNET_MODEL" ] && SONNET_MODEL="$fanout"
+    [ -z "$HAIKU_MODEL" ]  && HAIKU_MODEL="$fanout"
+  elif [ -t 0 ] && [ -t 1 ]; then
+    # Offer to install fzf once if missing.
+    if ! command -v fzf >/dev/null 2>&1 && [ ! -f "$CONFIG_DIR/.fzf-declined" ] && command -v brew >/dev/null 2>&1; then
       echo "" >&2
-      echo "(programming leaderboard, view=$RANK_VIEW)" >&2
-      printf "Pick model [number, full slug, or empty=#1]: " >&2
-      read -r CHOICE
-      if [ -z "$CHOICE" ]; then
-        MODEL="$(awk -F'\t' 'NR==1{print $1}' "$TMPLIST")"
-      elif [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
-        MODEL="$(awk -F'\t' -v n="$CHOICE" 'NR==n{print $1}' "$TMPLIST")"
-        [ -z "$MODEL" ] && { echo "claudr: invalid selection." >&2; exit 1; }
-      else
-        MODEL="$CHOICE"
-      fi
-      fi
+      echo "claudr: 'fzf' is required for the tier picker." >&2
+      printf "Install fzf via Homebrew now? [Y/n]: " >&2
+      read -r INSTALL
+      case "$INSTALL" in
+        n|N|no|NO) touch "$CONFIG_DIR/.fzf-declined"; echo "  declined — claudr needs fzf to configure tiers." >&2; exit 1 ;;
+        *) brew install fzf >&2 || { echo "  install failed." >&2; exit 1; } ;;
+      esac
     fi
-    rm -f "$TMPLIST"
+    B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; R=$'\033[0m'
+    echo "" >&2
+    echo "  ${B}${C}claudr · first-run tier setup${R}" >&2
+    echo "  ${D}Pick three OpenRouter models. Opus becomes your main; Sonnet and Haiku${R}" >&2
+    echo "  ${D}fill in when Claude Code dispatches subagents at those tiers.${R}" >&2
+    echo "" >&2
+    if run_tier_wizard; then
+      save_tiers
+    else
+      echo "claudr: setup cancelled." >&2
+      exit 1
+    fi
+  else
+    # Non-interactive, no config, no -m → safe default fanout.
+    fallback="moonshotai/kimi-k2.6"
+    [ -z "$OPUS_MODEL" ]   && OPUS_MODEL="$fallback"
+    [ -z "$SONNET_MODEL" ] && SONNET_MODEL="$fallback"
+    [ -z "$HAIKU_MODEL" ]  && HAIKU_MODEL="$fallback"
   fi
 fi
-MODEL="$(resolve_model "$MODEL")"
+
+# Resolve aliases ("kimi" → "moonshotai/kimi-k2.6" etc.) on every tier slug.
+OPUS_MODEL="$(resolve_model "$OPUS_MODEL")"
+SONNET_MODEL="$(resolve_model "$SONNET_MODEL")"
+HAIKU_MODEL="$(resolve_model "$HAIKU_MODEL")"
+
+# -m overrides main model only; tier mapping is untouched. With no -m, main = opus.
+if [ -n "$MODEL" ]; then
+  MODEL="$(resolve_model "$MODEL")"
+else
+  MODEL="$OPUS_MODEL"
+fi
+
+validate_tiers
 
 if ! command -v claude >/dev/null 2>&1; then
   echo "claudr: 'claude' CLI not found in PATH." >&2
@@ -597,13 +743,26 @@ if ! command -v claude >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "claudr -> model=$MODEL  endpoint=https://openrouter.ai/api" >&2
+{
+  B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; R=$'\033[0m'
+  echo ""
+  printf "  %s%sclaudr%s  %sendpoint%s  https://openrouter.ai/api\n" "$B" "$C" "$R" "$D" "$R"
+  printf "          %smain  %s  %s\n" "$C" "$R" "$MODEL"
+  printf "          %sopus  %s  %s\n" "$D" "$R" "$OPUS_MODEL"
+  printf "          %ssonnet%s  %s\n" "$D" "$R" "$SONNET_MODEL"
+  printf "          %shaiku %s  %s\n" "$D" "$R" "$HAIKU_MODEL"
+  printf "          %s(claudr --tiers to change)%s\n" "$D" "$R"
+  echo ""
+} >&2
 
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
 export ANTHROPIC_AUTH_TOKEN="$KEY"
 export ANTHROPIC_API_KEY=""
 export ANTHROPIC_MODEL="$MODEL"
-export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$MODEL}"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPUS_MODEL"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$SONNET_MODEL"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$HAIKU_MODEL"
+export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$HAIKU_MODEL}"
 
 # Claude Code limitation: when pointed at a non-Anthropic endpoint, it defaults
 # the context window to a hardcoded 200K regardless of the actual model. The env
