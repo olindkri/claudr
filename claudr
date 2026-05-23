@@ -483,6 +483,8 @@ fzf_pick() {
     --header-first \
     --info=inline-right \
     --no-scrollbar \
+    --highlight-line \
+    --gutter=' ' \
     --margin=1,2 \
     --padding=0,1 \
     --expect=ctrl-a \
@@ -492,7 +494,7 @@ fzf_pick() {
     --preview-label=' details ' \
     --preview-label-pos=3 \
     --preview="printf '%b' {3}" \
-    --color='border:cyan:dim,label:cyan:bold,header:dim,prompt:cyan:bold,pointer:cyan:bold,marker:cyan,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold,hl:cyan,info:dim,separator:cyan:dim,preview-border:cyan:dim,preview-label:cyan:bold'
+    --color='border:cyan:dim,label:cyan:bold,header:dim,prompt:cyan:bold,pointer:cyan:bold,marker:cyan,bg+:236,fg+:bright-white:bold,hl+:bright-cyan:bold,current-bg:236,current-fg:bright-white:bold,current-hl:bright-cyan:bold,hl:cyan,info:dim,separator:cyan:dim,preview-border:cyan:dim,preview-label:cyan:bold'
 import sys
 B="\033[1m"; C="\033[36m"; D="\033[2m"; Y="\033[33m"; G="\033[32m"; W="\033[97m"; R="\033[0m"
 def fmt_ctx(ctx):
@@ -743,18 +745,6 @@ if ! command -v claude >/dev/null 2>&1; then
   exit 1
 fi
 
-{
-  B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; R=$'\033[0m'
-  echo ""
-  printf "  %s%sclaudr%s  %sendpoint%s  https://openrouter.ai/api\n" "$B" "$C" "$R" "$D" "$R"
-  printf "          %smain  %s  %s\n" "$C" "$R" "$MODEL"
-  printf "          %sopus  %s  %s\n" "$D" "$R" "$OPUS_MODEL"
-  printf "          %ssonnet%s  %s\n" "$D" "$R" "$SONNET_MODEL"
-  printf "          %shaiku %s  %s\n" "$D" "$R" "$HAIKU_MODEL"
-  printf "          %s(claudr --tiers to change)%s\n" "$D" "$R"
-  echo ""
-} >&2
-
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
 export ANTHROPIC_AUTH_TOKEN="$KEY"
 export ANTHROPIC_API_KEY=""
@@ -799,12 +789,12 @@ fi
 if [ "${CLAUDR_AUTOCOMPACT:-0}" = "1" ]; then
   # Auto-compact mode: keep CC's 200K assumption, trigger /compact at 75%.
   export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-75}"
-  echo "claudr: auto-compact ON (window pinned at CC's default ~200K, compact at ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%)" >&2
+  COMPACT_STATE="on @ ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}% (200K cap)"
 else
   # Real-window mode: disable auto-compact so CLAUDE_CODE_MAX_CONTEXT_TOKENS applies.
   export DISABLE_COMPACT="${DISABLE_COMPACT:-1}"
   export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-$MODEL_CTX}"
-  echo "claudr: context window = ${MODEL_CTX} tokens · auto-compact OFF (run /compact manually; CLAUDR_AUTOCOMPACT=1 to re-enable)" >&2
+  COMPACT_STATE="off · run /compact manually"
 fi
 
 # Pass --dangerously-skip-permissions by default. Opt out with CLAUDR_SAFE=1.
@@ -823,6 +813,54 @@ fi
 # machine see no Tavily, so e.g. ollama's launcher keeps its own search setup.
 MCP_FLAGS=()
 [ -f "$MCP_CONFIG_FILE" ] && MCP_FLAGS=(--mcp-config "$MCP_CONFIG_FILE")
+
+# --- unified launch banner ---
+# Show endpoint, tier mapping, and all non-default behaviors in one card so the
+# user can see at a glance what mode claudr is in. Rendered to stderr so it
+# never pollutes piped output.
+{
+  B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; Y=$'\033[33m'; G=$'\033[32m'; M=$'\033[35m'; R=$'\033[0m'
+
+  # human-readable context window
+  fmt_n() {
+    local n="$1"
+    if [ "$n" -ge 1000000 ] 2>/dev/null; then
+      awk -v x="$n" 'BEGIN{v=x/1000000; if (v==int(v)) printf "%dM", v; else printf "%.1fM", v}'
+    elif [ "$n" -ge 1000 ] 2>/dev/null; then printf "%dk" $(( n / 1000 ))
+    else printf "%s" "$n"
+    fi
+  }
+  CTX_HUMAN="$(fmt_n "$MODEL_CTX")"
+
+  # state strings
+  if [ -n "$SKIP_PERM_FLAG" ]; then PERMS="${Y}bypassed${R}  ${D}CLAUDR_SAFE=1 to enable${R}"
+  else                              PERMS="${G}prompted${R}"
+  fi
+  if [ ${#DISALLOW_FLAGS[@]} -gt 0 ]; then WEBSEARCH="${G}Tavily MCP${R}  ${D}(WebSearch disabled)${R}"
+  elif [ -f "$MCP_CONFIG_FILE" ];     then WEBSEARCH="${G}Tavily MCP + WebSearch${R}"
+  else                                     WEBSEARCH="${D}none${R}"
+  fi
+
+  # mark "main = opus" so users see the alias relationship
+  if [ "$MODEL" = "$OPUS_MODEL" ]; then MAIN_NOTE="${D} = opus${R}"; else MAIN_NOTE=""; fi
+
+  echo ""
+  printf "  %s%sclaudr%s  %s· OpenRouter routing for Claude Code%s\n" "$B" "$C" "$R" "$D" "$R"
+  printf "  %s──────────────────────────────────────────────────%s\n" "$D" "$R"
+  printf "    %sendpoint%s   %s\n" "$D" "$R" "https://openrouter.ai/api"
+  echo ""
+  printf "    %smain%s       %s%s%s%s\n"     "$C" "$R" "$B" "$MODEL"        "$R" "$MAIN_NOTE"
+  printf "    %ssonnet%s     %s\n"           "$D" "$R" "$SONNET_MODEL"
+  printf "    %shaiku%s      %s\n"           "$D" "$R" "$HAIKU_MODEL"
+  echo ""
+  printf "    %scontext%s    %s%s%s tokens  %s(%s)%s\n" "$D" "$R" "$B" "$CTX_HUMAN" "$R" "$D" "$MODEL_CTX" "$R"
+  printf "    %scompact%s    %s\n"           "$D" "$R" "$COMPACT_STATE"
+  printf "    %ssearch%s     %b\n"           "$D" "$R" "$WEBSEARCH"
+  printf "    %sperms%s      %b\n"           "$D" "$R" "$PERMS"
+  echo ""
+  printf "    %sclaudr --tiers%s to reconfigure · %sCLAUDR_AUTOCOMPACT=1 CLAUDR_SAFE=1 CLAUDR_ALLOW_WEBSEARCH=1%s\n" "$D" "$R" "$D" "$R"
+  echo ""
+} >&2
 
 exec claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} \
   ${DISALLOW_FLAGS[@]+"${DISALLOW_FLAGS[@]}"} \
