@@ -43,6 +43,15 @@ The installer auto-clones the repo to `~/.claudr`, symlinks
 `/usr/local/bin`, or `~/.local/bin`), and offers to install `fzf`. Re-run
 the same command later to update.
 
+> **Don't trust `curl | bash` blind?** Inspect first:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/olindkri/claudr/main/install.sh -o install.sh
+> less install.sh   # read it
+> bash install.sh
+> ```
+> Source is also browsable at
+> [github.com/olindkri/claudr/blob/main/install.sh](https://github.com/olindkri/claudr/blob/main/install.sh).
+
 ### Windows (PowerShell)
 
 ```powershell
