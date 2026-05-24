@@ -104,7 +104,13 @@ context length, and price from the catalog. Both feeds are cached for 6h.
 ```bash
 claudr                          # launch with your saved tier config (first run: setup wizard)
 claudr --tiers                  # re-pick the 3 tier models (opus/sonnet/haiku)
+claudr --tiers coding           # save tier picks as a named preset
+claudr --preset coding          # launch with a named preset
+claudr --presets                # list saved presets and exit
 claudr -m kimi                  # override only the main model for this launch
+claudr -p "summarize file.md"   # one-shot print mode (returns just the text)
+claudr --ask "what is 2+2?"     # explicit non-interactive form
+claudr --doctor                 # health-check CLI, key, fzf, tier slugs, caches
 claudr --list -n 50             # print top 50 as a table, exit
 claudr --view month             # ranking window: day | week | month | trending
 claudr --refresh                # bypass 6h cache
@@ -210,6 +216,90 @@ go to your saved opus/sonnet/haiku):
 claudr -m kimi
 ```
 
+### Named presets
+
+If you flip between workflows — e.g. cheap models for boilerplate, top-tier
+for hard debugging — save each one as a named preset instead of re-running
+the wizard:
+
+```bash
+claudr --tiers cheap            # wizard → saves to ~/.config/claudr/presets/cheap.conf
+claudr --tiers power            # different picks → saves as power
+claudr --presets                # list all presets (with their tier mappings)
+claudr --preset cheap           # launch with the 'cheap' preset
+```
+
+Bare `claudr` still uses the default `tiers.conf`. Each preset is a small
+shell-source file you can also edit by hand:
+
+```
+# ~/.config/claudr/presets/coding.conf
+OPUS=anthropic/claude-opus-4.7
+SONNET=anthropic/claude-sonnet-4.6
+HAIKU=anthropic/claude-haiku-4.5
+```
+
+The active preset name shows in the launch banner and the statusline.
+
+### Non-interactive use (`-p` / `--ask`)
+
+`claudr -p "your prompt"` works like `claude -p` and returns just the text
+reply on stdout — useful for scripts, pipelines, and agent frameworks:
+
+```bash
+claudr -p "list the TODO comments in src/" | tee todos.txt
+echo "describe this image" | claudr --ask "$(cat -)"
+```
+
+Under the hood, claudr transparently routes `-p` through a stream-json
+parser to work around upstream
+[claude-code#38805](https://github.com/anthropics/claude-code/issues/38805)
+(empty `result` field when OpenRouter responses include trailing
+`redacted_thinking` blocks). The fix is invisible: you keep the `-p`
+ergonomics, you get the actual text out.
+
+If you explicitly pass `--output-format json` or `--output-format stream-json`,
+claudr passes through to `claude` untouched — you're presumably parsing the
+structured output yourself.
+
+The launch banner auto-suppresses in print mode so it doesn't pollute
+scripted output. Force-show it with `CLAUDR_BANNER=1`. Opt out of the
+auto-routing with `CLAUDR_RAW_PRINT=1` (raw passthrough to `claude -p`).
+
+### Doctor
+
+```bash
+claudr --doctor
+```
+
+Runs a health check that verifies the `claude` CLI, `fzf`, `python3`,
+your OpenRouter key (live ping to `/auth/key`), Tavily key, default
+tier config, tier slug validity against the OpenRouter catalog, saved
+presets, and the model-cache freshness. Color-coded ✓ / ! / ✗ with a
+summary line. Good first thing to run if something feels off.
+
+### Statusline
+
+claudr writes a small statusline script and per-session settings file,
+then passes them to `claude --settings`. While you're inside the session,
+Claude Code's footer shows the model, context window, active preset, and
+working directory:
+
+```
+claudr · qwen/qwen3.7-max · ctx 1M · [coding] · myproject
+```
+
+Disable with `CLAUDR_STATUSLINE=0` if you have your own.
+
+### OpenRouter attribution
+
+Every request claudr makes is tagged with `HTTP-Referer:
+github.com/olindkri/claudr` and `X-Title: claudr` (via
+`ANTHROPIC_CUSTOM_HEADERS`), so your
+[OpenRouter activity dashboard](https://openrouter.ai/activity) groups
+claudr usage under one label and helps you debug rate-limit and provider
+routing issues. Override with `CLAUDR_REFERER` / `CLAUDR_TITLE`.
+
 #### Other configurable options
 
 | Setting                            | Default        | What it does                                                                |
@@ -223,6 +313,11 @@ claudr -m kimi
 | `CLAUDR_SAFE=1` env var            | off            | Don't pass `--dangerously-skip-permissions` to claude                       |
 | `CLAUDR_ALLOW_WEBSEARCH=1` env var | off            | Don't pass `--disallowedTools WebSearch` (lets the no-op tool show up)      |
 | `TAVILY_API_KEY` env var           | —              | Use this Tavily key for the web-search MCP instead of the saved file       |
+| `CLAUDR_STATUSLINE=0` env var      | on             | Disable claudr's statusline (use your own `claude` settings.json instead)  |
+| `CLAUDR_BANNER=1` env var          | auto           | Force-show the launch banner (normally hidden in `-p` / `--ask` modes)     |
+| `CLAUDR_RAW_PRINT=1` env var       | off            | Disable `-p` auto-routing; pass `claude -p` through raw                    |
+| `CLAUDR_REFERER` / `CLAUDR_TITLE`  | claudr/github  | Override OpenRouter attribution headers (`HTTP-Referer` / `X-Title`)       |
+| `CLAUDR_THINKING=1` env var        | off            | Keep extended thinking enabled in print mode (default: disabled for `-p`)  |
 
 #### In the picker / wizard
 

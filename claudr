@@ -5,13 +5,19 @@
 #
 # Usage:
 #   claudr                       # launch with saved tier config (first run: setup wizard)
-#   claudr --tiers               # re-run the 3-pick wizard to change tier config
+#   claudr --tiers [name]        # run 3-pick wizard, save as named preset (default if omitted)
+#   claudr --preset <name>             # launch with a named preset (e.g. cheap, power, coding)
+#   claudr --presets             # list saved presets and exit
 #   claudr -m kimi               # override only the main model for this launch
 #   claudr -m moonshotai/kimi-k2.6
 #   claudr --list                # print top N, exit
 #   claudr --list -n 50          # top 50
 #   claudr --view month          # ranking window: day|week|month|trending
 #   claudr --refresh             # bypass 6h cache
+#   claudr --doctor              # diagnose claude/fzf/key/cache health and exit
+#   claudr --ask "prompt"        # non-interactive: prints just the text reply
+#                                  (workaround for claude -p returning empty
+#                                   result on OpenRouter endpoint)
 #   claudr -- <claude args...>   # forward flags to claude
 #
 # Tier config (~/.config/claudr/tiers.conf) maps Claude Code's model aliases:
@@ -31,6 +37,9 @@ KEY_FILE="$CONFIG_DIR/key"
 RANK_CACHE="$CONFIG_DIR/rankings.tsv"
 MODELS_CACHE="$CONFIG_DIR/models.json"
 TIERS_FILE="$CONFIG_DIR/tiers.conf"
+PRESETS_DIR="$CONFIG_DIR/presets"
+STATUSLINE_FILE="$CONFIG_DIR/statusline.sh"
+SETTINGS_FILE="$CONFIG_DIR/settings.json"
 
 # --- key prompt/save: factored so the picker can re-invoke it on Ctrl+A ---
 # $1 = "missing" (first-time prompt) | "rotate" (replace existing)
@@ -161,15 +170,23 @@ prepare_mcp_config() {
     > "$MCP_CONFIG_FILE"
 }
 
+# Pre-scan args for read-only / setup modes so we can skip interactive prompts.
+SKIP_INTERACTIVE_SETUP=0
+for a in "$@"; do
+  case "$a" in
+    --doctor|--presets|--list|--list-all|-h|--help) SKIP_INTERACTIVE_SETUP=1; break ;;
+  esac
+done
+
 cleanup_global_mcp_once
-prepare_mcp_config || true
+[ "$SKIP_INTERACTIVE_SETUP" = "1" ] || prepare_mcp_config || true
 
 # --- key ---
 KEY="${OPENROUTER_API_KEY:-}"
 if [ -z "$KEY" ] && [ -f "$KEY_FILE" ]; then
   KEY="$(tr -d '[:space:]' < "$KEY_FILE")"
 fi
-if [ -z "$KEY" ]; then
+if [ -z "$KEY" ] && [ "$SKIP_INTERACTIVE_SETUP" != "1" ]; then
   if [ ! -t 0 ] || [ ! -t 1 ]; then
     echo "claudr: no OpenRouter key found (non-interactive shell)." >&2
     echo "  set OPENROUTER_API_KEY, or write the key to: $KEY_FILE" >&2
@@ -206,16 +223,34 @@ RANK_VIEW="${OPENROUTER_RANK_VIEW:-week}"
 TOP_N="${OPENROUTER_TOP_N:-25}"
 REFRESH=0
 TIERS_WIZARD=0
+DOCTOR_MODE=0
+PRESETS_LIST=0
+PRESET_NAME=""
+WIZARD_TARGET=""
+ASK_PROMPT=""
+ASK_MODE=0
 PASSTHRU=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -m|--model)   MODEL="$2"; shift 2 ;;
-    --tiers)      TIERS_WIZARD=1; shift ;;
-    --list)       LIST_MODE="ranked"; shift ;;
-    --list-all)   LIST_MODE="all"; shift ;;
-    --view)       RANK_VIEW="$2"; shift 2 ;;
-    -n|--top)     TOP_N="$2"; shift 2 ;;
-    --refresh)    REFRESH=1; shift ;;
+    --tiers)
+      TIERS_WIZARD=1
+      # Optional preset name: --tiers <name>  (skips if next is a flag or absent)
+      if [ $# -ge 2 ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+        WIZARD_TARGET="$2"; shift 2
+      else
+        shift
+      fi
+      ;;
+    --preset)    PRESET_NAME="$2"; shift 2 ;;
+    --presets)   PRESETS_LIST=1; shift ;;
+    --doctor)    DOCTOR_MODE=1; shift ;;
+    --ask)       ASK_MODE=1; ASK_PROMPT="$2"; shift 2 ;;
+    --list)      LIST_MODE="ranked"; shift ;;
+    --list-all)  LIST_MODE="all"; shift ;;
+    --view)      RANK_VIEW="$2"; shift 2 ;;
+    -n|--top)    TOP_N="$2"; shift 2 ;;
+    --refresh)   REFRESH=1; shift ;;
     --) shift; PASSTHRU+=("$@"); break ;;
     *)  PASSTHRU+=("$1"); shift ;;
   esac
@@ -540,32 +575,55 @@ PY
 }
 
 # --- tier config: persistent opus/sonnet/haiku mapping ---
-# Loads OPUS/SONNET/HAIKU from $TIERS_FILE. Returns 1 if file missing or
-# any value blank.
+# Resolves a preset name to a config file path. Empty name → legacy tiers.conf.
+preset_path() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    echo "$TIERS_FILE"
+  else
+    echo "$PRESETS_DIR/${name}.conf"
+  fi
+}
+
+# Loads OPUS/SONNET/HAIKU from a preset (or legacy tiers.conf if empty).
+# Returns 1 if file missing or any value blank.
 load_tiers() {
-  [ -f "$TIERS_FILE" ] || return 1
+  local file
+  file="$(preset_path "${1:-}")"
+  [ -f "$file" ] || return 1
   unset OPUS SONNET HAIKU
   # shellcheck source=/dev/null
-  . "$TIERS_FILE" 2>/dev/null || return 1
+  . "$file" 2>/dev/null || return 1
   [ -n "${OPUS:-}" ] && [ -n "${SONNET:-}" ] && [ -n "${HAIKU:-}" ] || return 1
   OPUS_MODEL="$OPUS"; SONNET_MODEL="$SONNET"; HAIKU_MODEL="$HAIKU"
   return 0
 }
 
-# Writes the current OPUS_MODEL/SONNET_MODEL/HAIKU_MODEL to $TIERS_FILE.
+# Writes the current OPUS_MODEL/SONNET_MODEL/HAIKU_MODEL to a preset file
+# (or legacy tiers.conf if $1 empty).
 save_tiers() {
-  mkdir -p "$CONFIG_DIR"
+  local name="${1:-}" file
+  file="$(preset_path "$name")"
+  mkdir -p "$(dirname "$file")"
   umask 077
-  cat > "$TIERS_FILE" <<EOF
+  cat > "$file" <<EOF
 # claudr tier config — what each Claude Code model alias resolves to.
 # OPUS    = main session model + the 'opus' alias for subagents
 # SONNET  = the 'sonnet' alias for subagents / mid-tier work
 # HAIKU   = the 'haiku' alias for subagents / background / fast tasks
-# Edit by hand, or re-run: claudr --tiers
+# Edit by hand, or re-run: claudr --tiers${name:+ $name}
 OPUS=$OPUS_MODEL
 SONNET=$SONNET_MODEL
 HAIKU=$HAIKU_MODEL
 EOF
+}
+
+# List available presets (filename without .conf), one per line.
+list_presets() {
+  [ -d "$PRESETS_DIR" ] || return 0
+  find "$PRESETS_DIR" -maxdepth 1 -name '*.conf' -type f 2>/dev/null \
+    | sed -e 's|.*/||' -e 's|\.conf$||' \
+    | sort
 }
 
 # Warns (does not fail) if any tier slug is missing from the OpenRouter catalog.
@@ -641,17 +699,55 @@ run_tier_wizard() {
   return 0
 }
 
-# --tiers — reconfigure tiers and exit
+# --presets — list saved presets and exit
+if [ "$PRESETS_LIST" = "1" ]; then
+  B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; G=$'\033[32m'; R=$'\033[0m'
+  echo "" >&2
+  printf "  %s%sclaudr presets%s\n" "$B" "$C" "$R" >&2
+  printf "  %s──────────────────────────────────────────────────%s\n" "$D" "$R" >&2
+  found=0
+  if [ -f "$TIERS_FILE" ]; then
+    found=1
+    OPUS_MODEL=""; SONNET_MODEL=""; HAIKU_MODEL=""
+    load_tiers "" >/dev/null 2>&1 || true
+    printf "    %s(default)%s\n" "$G" "$R" >&2
+    printf "      %sopus  %s  %s\n" "$D" "$R" "$OPUS_MODEL" >&2
+    printf "      %ssonnet%s  %s\n" "$D" "$R" "$SONNET_MODEL" >&2
+    printf "      %shaiku %s  %s\n" "$D" "$R" "$HAIKU_MODEL" >&2
+  fi
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    found=1
+    OPUS_MODEL=""; SONNET_MODEL=""; HAIKU_MODEL=""
+    load_tiers "$name" >/dev/null 2>&1 || true
+    printf "    %s%s%s\n" "$G" "$name" "$R" >&2
+    printf "      %sopus  %s  %s\n" "$D" "$R" "$OPUS_MODEL" >&2
+    printf "      %ssonnet%s  %s\n" "$D" "$R" "$SONNET_MODEL" >&2
+    printf "      %shaiku %s  %s\n" "$D" "$R" "$HAIKU_MODEL" >&2
+  done < <(list_presets)
+  [ "$found" = "0" ] && printf "    %sno presets saved — run: claudr --tiers <name>%s\n" "$D" "$R" >&2
+  echo "" >&2
+  printf "  %slaunch with: claudr --preset <name>%s\n\n" "$D" "$R" >&2
+  exit 0
+fi
+
+# --tiers [name] — reconfigure tiers (optionally as named preset) and exit
 if [ "$TIERS_WIZARD" = "1" ]; then
   if [ ! -t 0 ] || [ ! -t 1 ]; then
     echo "claudr --tiers requires an interactive terminal." >&2
     exit 1
   fi
   if run_tier_wizard; then
-    save_tiers
+    save_tiers "$WIZARD_TARGET"
+    saved_to="$(preset_path "$WIZARD_TARGET")"
     G=$'\033[32m'; D=$'\033[2m'; R=$'\033[0m'
     echo "" >&2
-    echo "  ${G}✓${R} tier config saved to $TIERS_FILE" >&2
+    if [ -n "$WIZARD_TARGET" ]; then
+      echo "  ${G}✓${R} preset '${WIZARD_TARGET}' saved to $saved_to" >&2
+      echo "    launch with: claudr -p $WIZARD_TARGET" >&2
+    else
+      echo "  ${G}✓${R} tier config saved to $saved_to" >&2
+    fi
     printf "    %sopus  %s  %s\n" "$D" "$R" "$OPUS_MODEL"   >&2
     printf "    %ssonnet%s  %s\n" "$D" "$R" "$SONNET_MODEL" >&2
     printf "    %shaiku %s  %s\n" "$D" "$R" "$HAIKU_MODEL"  >&2
@@ -661,6 +757,130 @@ if [ "$TIERS_WIZARD" = "1" ]; then
     echo "claudr: cancelled — no changes saved." >&2
     exit 1
   fi
+fi
+
+# --doctor — health check and exit
+if [ "$DOCTOR_MODE" = "1" ]; then
+  B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; G=$'\033[32m'; Y=$'\033[33m'; RED=$'\033[31m'; R=$'\033[0m'
+  PASS="${G}✓${R}"; WARN="${Y}!${R}"; FAIL="${RED}✗${R}"
+  fails=0; warns=0
+  echo "" >&2
+  printf "  %s%sclaudr · doctor%s\n" "$B" "$C" "$R" >&2
+  printf "  %s──────────────────────────────────────────────────%s\n" "$D" "$R" >&2
+
+  # claude CLI
+  if command -v claude >/dev/null 2>&1; then
+    cv="$(claude --version 2>/dev/null | head -n1)"
+    printf "    %s claude CLI         %s%s%s\n" "$PASS" "$D" "${cv:-installed}" "$R" >&2
+  else
+    printf "    %s claude CLI         %snot in PATH — npm i -g @anthropic-ai/claude-code%s\n" "$FAIL" "$D" "$R" >&2
+    fails=$((fails+1))
+  fi
+
+  # fzf
+  if command -v fzf >/dev/null 2>&1; then
+    fv="$(fzf --version 2>/dev/null | awk '{print $1}')"
+    printf "    %s fzf                %s%s%s\n" "$PASS" "$D" "${fv:-installed}" "$R" >&2
+  else
+    printf "    %s fzf                %smissing — brew install fzf%s\n" "$FAIL" "$D" "$R" >&2
+    fails=$((fails+1))
+  fi
+
+  # python3
+  if command -v python3 >/dev/null 2>&1; then
+    pv="$(python3 --version 2>/dev/null | awk '{print $2}')"
+    printf "    %s python3            %s%s%s\n" "$PASS" "$D" "${pv:-installed}" "$R" >&2
+  else
+    printf "    %s python3            %smissing — required for catalog parsing%s\n" "$FAIL" "$D" "$R" >&2
+    fails=$((fails+1))
+  fi
+
+  # OpenRouter key
+  if [ -z "${KEY:-}" ]; then
+    printf "    %s OpenRouter key     %snot configured%s\n" "$FAIL" "$D" "$R" >&2
+    fails=$((fails+1))
+  else
+    src="env"; [ -z "${OPENROUTER_API_KEY:-}" ] && src="$KEY_FILE"
+    http_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+      -H "Authorization: Bearer $KEY" https://openrouter.ai/api/v1/auth/key 2>/dev/null || echo 000)"
+    if [ "$http_code" = "200" ]; then
+      printf "    %s OpenRouter key     %svalid (from %s)%s\n" "$PASS" "$D" "$src" "$R" >&2
+    elif [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+      printf "    %s OpenRouter key     %srejected (HTTP %s)%s\n" "$FAIL" "$D" "$http_code" "$R" >&2
+      fails=$((fails+1))
+    else
+      printf "    %s OpenRouter key     %scould not verify (HTTP %s)%s\n" "$WARN" "$D" "$http_code" "$R" >&2
+      warns=$((warns+1))
+    fi
+  fi
+
+  # Tavily key
+  if [ -n "${TAVILY_API_KEY:-}" ] || [ -f "$TAVILY_KEY_FILE" ]; then
+    printf "    %s Tavily key         %sconfigured (web search enabled)%s\n" "$PASS" "$D" "$R" >&2
+  else
+    printf "    %s Tavily key         %snot set — web search disabled%s\n" "$WARN" "$D" "$R" >&2
+    warns=$((warns+1))
+  fi
+
+  # Default tier config
+  if load_tiers ""; then
+    printf "    %s default tiers      %sopus=%s sonnet=%s haiku=%s%s\n" \
+      "$PASS" "$D" "$OPUS_MODEL" "$SONNET_MODEL" "$HAIKU_MODEL" "$R" >&2
+  else
+    printf "    %s default tiers      %snone — first launch will run setup wizard%s\n" "$WARN" "$D" "$R" >&2
+    warns=$((warns+1))
+  fi
+
+  # Validate tier slugs against catalog
+  if [ -f "$MODELS_CACHE" ] && [ -n "${OPUS_MODEL:-}" ]; then
+    missing="$(python3 - "$MODELS_CACHE" "$OPUS_MODEL" "$SONNET_MODEL" "$HAIKU_MODEL" <<'PY' 2>/dev/null
+import json, sys
+try: ids = {x["id"] for x in json.load(open(sys.argv[1]))["data"]}
+except Exception: sys.exit(0)
+for s in sys.argv[2:]:
+    if s not in ids: print(s)
+PY
+)"
+    if [ -z "$missing" ]; then
+      printf "    %s tier slugs         %sall resolve in OpenRouter catalog%s\n" "$PASS" "$D" "$R" >&2
+    else
+      printf "    %s tier slugs         %sunknown: %s%s\n" "$WARN" "$D" "$(echo "$missing" | tr '\n' ' ')" "$R" >&2
+      warns=$((warns+1))
+    fi
+  fi
+
+  # Presets
+  p_count="$(list_presets | wc -l | tr -d ' ')"
+  if [ "${p_count:-0}" -gt 0 ]; then
+    printf "    %s presets            %s%s saved (%s)%s\n" "$PASS" "$D" "$p_count" "$(list_presets | tr '\n' ' ')" "$R" >&2
+  else
+    printf "    %s presets            %snone — create with: claudr --tiers <name>%s\n" "$WARN" "$D" "$R" >&2
+  fi
+
+  # Cache freshness
+  if [ -f "$MODELS_CACHE" ]; then
+    age=$(cache_age "$MODELS_CACHE")
+    h=$((age/3600))
+    if [ "$age" -lt 21600 ]; then
+      printf "    %s models cache      %s%dh old (fresh)%s\n" "$PASS" "$D" "$h" "$R" >&2
+    else
+      printf "    %s models cache      %s%dh old (stale — run: claudr --refresh)%s\n" "$WARN" "$D" "$h" "$R" >&2
+      warns=$((warns+1))
+    fi
+  else
+    printf "    %s models cache      %snot yet fetched%s\n" "$WARN" "$D" "$R" >&2
+  fi
+
+  echo "" >&2
+  if [ "$fails" -gt 0 ]; then
+    printf "  %s%d failed, %d warnings%s\n\n" "$RED" "$fails" "$warns" "$R" >&2
+    exit 1
+  elif [ "$warns" -gt 0 ]; then
+    printf "  %sall critical checks passed, %d warnings%s\n\n" "$Y" "$warns" "$R" >&2
+  else
+    printf "  %sall checks passed%s\n\n" "$G" "$R" >&2
+  fi
+  exit 0
 fi
 
 if [ -n "$LIST_MODE" ]; then
@@ -675,9 +895,21 @@ if [ -n "$LIST_MODE" ]; then
 fi
 
 # --- tier resolution ---
-# Resolution: env var > tiers.conf > first-launch wizard > -m fanout > fallback
+# Resolution: env var > preset (-p) > tiers.conf > first-launch wizard > -m fanout > fallback
 OPUS_MODEL=""; SONNET_MODEL=""; HAIKU_MODEL=""
-load_tiers || true   # populates OPUS_MODEL/SONNET_MODEL/HAIKU_MODEL or leaves them blank
+ACTIVE_PRESET=""
+if [ -n "$PRESET_NAME" ]; then
+  if load_tiers "$PRESET_NAME"; then
+    ACTIVE_PRESET="$PRESET_NAME"
+  else
+    echo "claudr: preset '$PRESET_NAME' not found at $(preset_path "$PRESET_NAME")" >&2
+    echo "  list presets: claudr --presets" >&2
+    echo "  create one:   claudr --tiers $PRESET_NAME" >&2
+    exit 1
+  fi
+else
+  load_tiers "" || true   # legacy default; leaves vars blank if missing
+fi
 
 # Per-launch env overrides (highest precedence)
 [ -n "${CLAUDR_OPUS_MODEL:-}" ]   && OPUS_MODEL="$CLAUDR_OPUS_MODEL"
@@ -754,6 +986,14 @@ export ANTHROPIC_DEFAULT_SONNET_MODEL="$SONNET_MODEL"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$HAIKU_MODEL"
 export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$HAIKU_MODEL}"
 
+# OpenRouter attribution headers — claudr identifies itself in your
+# https://openrouter.ai/activity dashboard. Overridable for users who want
+# their own X-Title/HTTP-Referer.
+CLAUDR_REFERER="${CLAUDR_REFERER:-https://github.com/olindkri/claudr}"
+CLAUDR_TITLE="${CLAUDR_TITLE:-claudr}"
+export ANTHROPIC_CUSTOM_HEADERS="HTTP-Referer: $CLAUDR_REFERER
+X-Title: $CLAUDR_TITLE"
+
 # Claude Code limitation: when pointed at a non-Anthropic endpoint, it defaults
 # the context window to a hardcoded 200K regardless of the actual model. The env
 # var CLAUDE_CODE_MAX_CONTEXT_TOKENS only takes effect when DISABLE_COMPACT=1 is
@@ -814,23 +1054,130 @@ fi
 MCP_FLAGS=()
 [ -f "$MCP_CONFIG_FILE" ] && MCP_FLAGS=(--mcp-config "$MCP_CONFIG_FILE")
 
+# Compute human-readable context window early (statusline + banner both use it).
+if [ "$MODEL_CTX" -ge 1000000 ] 2>/dev/null; then
+  CTX_HUMAN="$(awk -v x="$MODEL_CTX" 'BEGIN{v=x/1000000; if (v==int(v)) printf "%dM", v; else printf "%.1fM", v}')"
+elif [ "$MODEL_CTX" -ge 1000 ] 2>/dev/null; then
+  CTX_HUMAN="$(( MODEL_CTX / 1000 ))k"
+else
+  CTX_HUMAN="$MODEL_CTX"
+fi
+
+# Detect non-interactive print mode (`claude -p "prompt"`) — when forwarded,
+# the banner is noise that pollutes scripted output. Suppress unless the user
+# explicitly opts in with CLAUDR_BANNER=1.
+PRINT_MODE=0
+HAS_OUTPUT_FORMAT=0
+PRINT_PROMPT=""
+NEW_PASSTHRU=()
+prev=""
+for a in ${PASSTHRU[@]+"${PASSTHRU[@]}"}; do
+  case "$a" in
+    -p|--print) PRINT_MODE=1; prev="$a"; NEW_PASSTHRU+=("$a") ;;
+    --output-format) HAS_OUTPUT_FORMAT=1; prev="$a"; NEW_PASSTHRU+=("$a") ;;
+    *)
+      if [ "$prev" = "-p" ] || [ "$prev" = "--print" ]; then
+        PRINT_PROMPT="$a"
+      fi
+      prev=""; NEW_PASSTHRU+=("$a") ;;
+  esac
+done
+PASSTHRU=("${NEW_PASSTHRU[@]}")
+
+# Auto-route: when user runs `claudr -p "prompt"` without --output-format and
+# without --ask, transparently use the stream-json extractor to work around
+# claude-code issue #38805 (empty result from OpenRouter responses with
+# trailing redacted_thinking blocks). Opt out with CLAUDR_RAW_PRINT=1.
+if [ "$PRINT_MODE" = "1" ] && [ "$HAS_OUTPUT_FORMAT" = "0" ] \
+   && [ "$ASK_MODE" = "0" ] && [ -n "$PRINT_PROMPT" ] \
+   && [ "${CLAUDR_RAW_PRINT:-0}" != "1" ]; then
+  ASK_MODE=1
+  ASK_PROMPT="$PRINT_PROMPT"
+  # Strip -p/--print and its arg from PASSTHRU; --ask block adds them back.
+  FILTERED=()
+  skip_next=0
+  for a in "${PASSTHRU[@]}"; do
+    if [ "$skip_next" = "1" ]; then skip_next=0; continue; fi
+    case "$a" in
+      -p|--print) skip_next=1 ;;
+      *) FILTERED+=("$a") ;;
+    esac
+  done
+  PASSTHRU=("${FILTERED[@]+${FILTERED[@]}}")
+fi
+
+# Workaround for claude-code issue #38805 (incomplete v2.1.84 fix):
+# OpenRouter's Anthropic skin appends `redacted_thinking` blocks AFTER the
+# text block. Claude Code's print-mode result extractor reads the LAST block's
+# `.text` field — which doesn't exist on redacted_thinking — so `result` comes
+# back as "" even though the model responded correctly.
+#
+# Setting MAX_THINKING_TOKENS=0 stops Claude Code from requesting extended
+# thinking, so no thinking/redacted_thinking blocks appear and the extractor
+# works. We only flip this in print mode; interactive sessions keep thinking.
+# Override via CLAUDR_THINKING=1 to force-enable thinking even in print mode.
+if [ "$PRINT_MODE" = "1" ] || [ "$ASK_MODE" = "1" ]; then
+  if [ "${CLAUDR_THINKING:-0}" != "1" ]; then
+    export MAX_THINKING_TOKENS="${MAX_THINKING_TOKENS:-0}"
+  fi
+fi
+SHOW_BANNER=1
+if [ "$PRINT_MODE" = "1" ] && [ "${CLAUDR_BANNER:-0}" != "1" ]; then SHOW_BANNER=0; fi
+if [ "$ASK_MODE" = "1" ] && [ "${CLAUDR_BANNER:-0}" != "1" ]; then SHOW_BANNER=0; fi
+if [ ! -t 2 ] && [ "${CLAUDR_BANNER:-0}" != "1" ]; then SHOW_BANNER=0; fi
+
+# --- statusline: show current OpenRouter model in Claude Code's footer ---
+# Generates a tiny script that Claude Code calls on each status refresh.
+# Receives a JSON blob on stdin; we mostly use environment for speed.
+# Opt out with CLAUDR_STATUSLINE=0.
+SETTINGS_FLAGS=()
+if [ "${CLAUDR_STATUSLINE:-1}" = "1" ]; then
+  umask 077
+  cat > "$STATUSLINE_FILE" <<'STATUSLINE'
+#!/usr/bin/env bash
+# claudr statusline — invoked by Claude Code; receives session JSON on stdin.
+# Renders: claudr · <model> · ctx <X>k · <cwd>
+set -eu
+input="$(cat)"
+model="${ANTHROPIC_MODEL:-?}"
+ctx="${CLAUDR_CTX_HUMAN:-?}"
+preset="${CLAUDR_ACTIVE_PRESET:-}"
+# Try to pull cwd from the JSON without requiring jq.
+cwd="$(printf %s "$input" | sed -n 's/.*"current_working_directory"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+[ -z "$cwd" ] && cwd="$(pwd)"
+short_cwd="${cwd##*/}"
+C=$'\033[36m'; D=$'\033[2m'; B=$'\033[1m'; R=$'\033[0m'
+if [ -n "$preset" ]; then
+  printf "%sclaudr%s %s·%s %s%s%s %s·%s ctx %s %s·%s %s[%s]%s %s·%s %s%s%s" \
+    "$C" "$R" "$D" "$R" "$B" "$model" "$R" "$D" "$R" "$ctx" "$D" "$R" "$C" "$preset" "$R" "$D" "$R" "$D" "$short_cwd" "$R"
+else
+  printf "%sclaudr%s %s·%s %s%s%s %s·%s ctx %s %s·%s %s%s%s" \
+    "$C" "$R" "$D" "$R" "$B" "$model" "$R" "$D" "$R" "$ctx" "$D" "$R" "$D" "$short_cwd" "$R"
+fi
+STATUSLINE
+  chmod +x "$STATUSLINE_FILE"
+  # Write a session settings.json wiring the statusline.
+  cat > "$SETTINGS_FILE" <<JSON
+{
+  "statusLine": {
+    "type": "command",
+    "command": "$STATUSLINE_FILE",
+    "padding": 0
+  }
+}
+JSON
+  SETTINGS_FLAGS=(--settings "$SETTINGS_FILE")
+  export CLAUDR_CTX_HUMAN
+  export CLAUDR_ACTIVE_PRESET="$ACTIVE_PRESET"
+fi
+
 # --- unified launch banner ---
 # Show endpoint, tier mapping, and all non-default behaviors in one card so the
 # user can see at a glance what mode claudr is in. Rendered to stderr so it
 # never pollutes piped output.
+if [ "$SHOW_BANNER" = "1" ]; then
 {
   B=$'\033[1m'; C=$'\033[36m'; D=$'\033[2m'; Y=$'\033[33m'; G=$'\033[32m'; M=$'\033[35m'; R=$'\033[0m'
-
-  # human-readable context window
-  fmt_n() {
-    local n="$1"
-    if [ "$n" -ge 1000000 ] 2>/dev/null; then
-      awk -v x="$n" 'BEGIN{v=x/1000000; if (v==int(v)) printf "%dM", v; else printf "%.1fM", v}'
-    elif [ "$n" -ge 1000 ] 2>/dev/null; then printf "%dk" $(( n / 1000 ))
-    else printf "%s" "$n"
-    fi
-  }
-  CTX_HUMAN="$(fmt_n "$MODEL_CTX")"
 
   # state strings
   if [ -n "$SKIP_PERM_FLAG" ]; then PERMS="${Y}bypassed${R}  ${D}CLAUDR_SAFE=1 to enable${R}"
@@ -858,11 +1205,55 @@ MCP_FLAGS=()
   printf "    %ssearch%s     %b\n"           "$D" "$R" "$WEBSEARCH"
   printf "    %sperms%s      %b\n"           "$D" "$R" "$PERMS"
   echo ""
-  printf "    %sclaudr --tiers%s to reconfigure · %sCLAUDR_AUTOCOMPACT=1 CLAUDR_SAFE=1 CLAUDR_ALLOW_WEBSEARCH=1%s\n" "$D" "$R" "$D" "$R"
+  if [ -n "$ACTIVE_PRESET" ]; then
+    printf "    %spreset%s %s%s%s · %sclaudr --tiers%s to reconfigure · %sCLAUDR_AUTOCOMPACT=1 CLAUDR_SAFE=1 CLAUDR_ALLOW_WEBSEARCH=1%s\n" "$D" "$R" "$C" "$ACTIVE_PRESET" "$R" "$D" "$R" "$D" "$R"
+  else
+    printf "    %sclaudr --tiers%s to reconfigure · %sCLAUDR_AUTOCOMPACT=1 CLAUDR_SAFE=1 CLAUDR_ALLOW_WEBSEARCH=1%s\n" "$D" "$R" "$D" "$R"
+  fi
   echo ""
 } >&2
+fi
+
+# --ask: workaround for claude -p returning empty `result` when ANTHROPIC_BASE_URL
+# is OpenRouter. The model responds correctly in the stream; only the final
+# text-mode result extraction is broken. Stream the response, parse out text
+# blocks ourselves, and emit just the assistant's reply on stdout.
+if [ "$ASK_MODE" = "1" ]; then
+  if [ -z "$ASK_PROMPT" ]; then
+    echo "claudr --ask requires a prompt: claudr --ask \"your prompt\"" >&2
+    exit 1
+  fi
+  claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} \
+    ${DISALLOW_FLAGS[@]+"${DISALLOW_FLAGS[@]}"} \
+    ${MCP_FLAGS[@]+"${MCP_FLAGS[@]}"} \
+    ${SETTINGS_FLAGS[@]+"${SETTINGS_FLAGS[@]}"} \
+    ${PASSTHRU[@]+"${PASSTHRU[@]}"} \
+    -p "$ASK_PROMPT" --output-format stream-json --verbose 2>/dev/null \
+    | python3 -c '
+import json, sys
+exit_code = 0
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try: obj = json.loads(line)
+    except Exception: continue
+    if obj.get("type") == "assistant":
+        for block in obj.get("message", {}).get("content", []) or []:
+            if block.get("type") == "text":
+                sys.stdout.write(block.get("text", ""))
+        sys.stdout.flush()
+    elif obj.get("type") == "result" and obj.get("is_error"):
+        msg = obj.get("result") or "error"
+        sys.stderr.write("claudr --ask: " + str(msg) + "\n")
+        exit_code = 1
+sys.stdout.write("\n")
+sys.exit(exit_code)
+'
+  exit $?
+fi
 
 exec claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} \
   ${DISALLOW_FLAGS[@]+"${DISALLOW_FLAGS[@]}"} \
   ${MCP_FLAGS[@]+"${MCP_FLAGS[@]}"} \
+  ${SETTINGS_FLAGS[@]+"${SETTINGS_FLAGS[@]}"} \
   ${PASSTHRU[@]+"${PASSTHRU[@]}"}
