@@ -201,6 +201,7 @@ get routed automatically — you don't need to switch manually.
 | `CLAUDR_SONNET_MODEL=<slug> claudr`     | Override sonnet tier for this launch only       |
 | `CLAUDR_HAIKU_MODEL=<slug> claudr`      | Override haiku tier for this launch only        |
 | `claudr -m <slug>`                      | Override main model only; tiers stay as configured |
+| `claudr --preset <name>`                | Use a named preset instead of the default tier config |
 
 You can combine them. Example: run with your saved config but swap opus
 to GPT-5 for a one-off session:
@@ -416,6 +417,29 @@ env vars before exec'ing `claude`:
 Override either by setting the env var yourself before running
 `claudr`. If you're hitting context walls anyway, run `/compact`
 manually every 10–15 turns or restart the session.
+
+## Troubleshooting
+
+Start with:
+
+```bash
+claudr --doctor
+```
+
+It verifies the `claude` CLI, `fzf`, `python3`, your OpenRouter key (with a
+live ping), Tavily key, default tier config, tier slugs against the
+OpenRouter catalog, saved presets, and model-cache freshness — color-coded
+pass / warn / fail with a summary line. Fast first thing to run when
+something feels off.
+
+| Symptom                                          | Try                                                    |
+|--------------------------------------------------|--------------------------------------------------------|
+| Picker empty / leaderboard not loading           | `claudr --refresh` (bypasses the 6h cache)             |
+| Wrong model slug saved                           | `claudr --tiers` to re-pick, or edit `~/.config/claudr/tiers.conf` |
+| Want to swap your OpenRouter key                 | Press **Ctrl+A** inside the picker, or delete `~/.config/claudr/key` |
+| Web search not working                           | Set `TAVILY_API_KEY` or write the key to `~/.config/claudr/tavily-key` |
+| `claudr -p "..."` returns empty in older versions | Update — claudr auto-routes around [claude-code#38805](https://github.com/anthropics/claude-code/issues/38805); set `CLAUDR_RAW_PRINT=1` to opt out |
+| Statusline clashes with your own                 | `CLAUDR_STATUSLINE=0 claudr`                           |
 
 ## Caveats
 
