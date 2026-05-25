@@ -210,14 +210,41 @@ function Get-CacheAgeHours([string]$f) {
   return ((Get-Date) - (Get-Item $f).LastWriteTime).TotalHours
 }
 
+# Wrapper around Invoke-WebRequest that follows 308 Permanent Redirect manually.
+# Windows PowerShell 5.1's IWR follows 301/302/303/307 but trips on 308 — which
+# OpenRouter now returns for several paths (e.g. /rankings/programming).
+function Invoke-WebRequestFollow308 {
+  param([string]$Uri, [hashtable]$Headers = @{}, [int]$TimeoutSec = 20, [int]$MaxRedirects = 5)
+  for ($i = 0; $i -lt $MaxRedirects; $i++) {
+    try {
+      return Invoke-WebRequest -Uri $Uri -Headers $Headers -TimeoutSec $TimeoutSec -UseBasicParsing -MaximumRedirection 5
+    } catch {
+      $resp = $_.Exception.Response
+      if ($null -ne $resp -and [int]$resp.StatusCode -eq 308) {
+        $loc = $resp.Headers['Location']
+        if ($loc) {
+          if ($loc -notmatch '^https?://') {
+            $base = [Uri]$Uri
+            $loc = (New-Object Uri($base, $loc)).AbsoluteUri
+          }
+          $Uri = $loc; continue
+        }
+      }
+      throw
+    }
+  }
+  throw "Too many redirects fetching $Uri"
+}
+
 function Get-Catalog {
   if (-not $Refresh -and (Get-CacheAgeHours $ModelsCache) -lt 6) {
     return (Get-Content $ModelsCache -Raw | ConvertFrom-Json).data
   }
   try {
-    $resp = Invoke-RestMethod -Uri 'https://openrouter.ai/api/v1/models' `
-              -Headers @{Authorization="Bearer $Key"} -TimeoutSec 15
-    $resp | ConvertTo-Json -Depth 10 | Set-Content $ModelsCache
+    $raw = (Invoke-WebRequestFollow308 -Uri 'https://openrouter.ai/api/v1/models' `
+              -Headers @{Authorization="Bearer $Key"} -TimeoutSec 15).Content
+    $resp = $raw | ConvertFrom-Json
+    Set-Content $ModelsCache -Value $raw
     return $resp.data
   } catch {
     if (Test-Path $ModelsCache) { return (Get-Content $ModelsCache -Raw | ConvertFrom-Json).data }
@@ -255,7 +282,7 @@ function Get-RankedTsv([string]$view) {
   $nameToId = @{}; foreach ($m in $catalog) { if ($m.name) { $nameToId[$m.name] = $m.id } }
   $meta     = @{}; foreach ($m in $catalog) { $meta[$m.id] = $m }
 
-  $html = (Invoke-WebRequest -Uri "https://openrouter.ai/rankings/programming?view=$view" -TimeoutSec 20).Content
+  $html = (Invoke-WebRequestFollow308 -Uri "https://openrouter.ai/rankings/programming?view=$view" -TimeoutSec 20).Content
   $pushes = [regex]::Matches($html, 'self\.__next_f\.push\(\[1,"([\s\S]*?)"\]\)')
   $sb = New-Object System.Text.StringBuilder
   foreach ($p in $pushes) {
