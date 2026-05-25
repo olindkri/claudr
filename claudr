@@ -41,6 +41,13 @@ PRESETS_DIR="$CONFIG_DIR/presets"
 STATUSLINE_FILE="$CONFIG_DIR/statusline.sh"
 SETTINGS_FILE="$CONFIG_DIR/settings.json"
 
+# Render an OSC-8 terminal hyperlink: clickable in iTerm2, Windows Terminal,
+# gnome-terminal, kitty, wezterm; falls back to plain text in older terminals.
+hyperlink() {
+  # $1 = url, $2 = display text (colored escape codes ok)
+  printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$2"
+}
+
 # --- key prompt/save: factored so the picker can re-invoke it on Ctrl+A ---
 # $1 = "missing" (first-time prompt) | "rotate" (replace existing)
 # returns 0 on save, 1 on cancel (rotate mode only)
@@ -58,7 +65,11 @@ prompt_and_save_key() {
   if [ "$mode" = "rotate" ]; then
     printf "  %sCurrent key:%s %s  %s(will be replaced)%s\n" "$D" "$R" "$KEY_FILE" "$D" "$R" >&2
   fi
-  printf "  %sGet a key at:%s %shttps://openrouter.ai/keys%s\n" "$D" "$R" "$C" "$R" >&2
+  printf "  %sNew here?%s\n" "$D" "$R" >&2
+  printf "  %s1.%s Sign up:    %s%s\n" "$Y" "$R" "$C" "$(hyperlink "https://openrouter.ai/sign-up" "https://openrouter.ai/sign-up")$R" >&2
+  printf "  %s2.%s Create key: %s%s\n" "$Y" "$R" "$C" "$(hyperlink "https://openrouter.ai/keys" "https://openrouter.ai/keys")$R" >&2
+  printf "  %s3.%s Preload a few \$ of credit, or pick a free model later (look for %s:free%s suffix)\n" "$Y" "$R" "$B" "$R" >&2
+  printf "  %sAlready have a key?%s Paste it below.\n" "$D" "$R" >&2
   printf "  %sEsc%s cancels · %sEnter%s on empty also cancels\n\n" "$Y" "$R" "$Y" "$R" >&2
   printf "  %sKey ›%s " "$B" "$R" >&2
 
@@ -131,14 +142,18 @@ cleanup_global_mcp_once() {
 prompt_tavily_key() {
   # interactive only — silently skip in pipes / CI
   [ -t 0 ] && [ -t 1 ] || return 1
-  local B="$(printf '\033[1m')" D="$(printf '\033[2m')" G="$(printf '\033[32m')" R="$(printf '\033[0m')"
+  local B="$(printf '\033[1m')" C="$(printf '\033[36m')" D="$(printf '\033[2m')" Y="$(printf '\033[33m')" G="$(printf '\033[32m')" R="$(printf '\033[0m')"
   {
     echo ""
     printf "  %s🔎 Set up web search (Tavily)%s\n" "$B" "$R"
     printf "  %s────────────────────────────────────────────────────%s\n" "$D" "$R"
-    printf "  Free tier 1000 queries/mo, AI-agent-friendly (no per-second cap).\n"
-    printf "  Sign up: %shttps://app.tavily.com%s   (no card required)\n" "$D" "$R"
-    printf "  Press Enter to skip (you can set it later by writing it to %s).\n\n" "$TAVILY_KEY_FILE"
+    printf "  Optional — gives the model real web search through an MCP server\n"
+    printf "  scoped to claudr only. %s1000 queries/month free%s, no per-second cap.\n\n" "$B" "$R"
+    printf "  %sNew here?%s\n" "$D" "$R"
+    printf "  %s1.%s Sign up: %s%s  %s(no credit card)%s\n" "$Y" "$R" "$C" "$(hyperlink "https://app.tavily.com" "https://app.tavily.com")$R" "$D" "$R"
+    printf "  %s2.%s Copy the API key from the dashboard\n" "$Y" "$R"
+    printf "  %s3.%s Paste it below\n\n" "$Y" "$R"
+    printf "  %sPress Enter to skip%s (you can set it later by writing it to %s).\n\n" "$Y" "$R" "$TAVILY_KEY_FILE"
     printf "  %sKey ›%s " "$B" "$R"
   } >&2
   local k=""

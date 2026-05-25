@@ -50,14 +50,32 @@ $GlobalCleanupMarker  = Join-Path $ConfigDir '.global-mcp-cleaned.v2'
 # Read-only modes skip interactive setup so they work without keys configured.
 $SkipInteractiveSetup = ($Doctor -or $Presets -or $List -or $ListAll)
 
+# OSC-8 terminal hyperlink: clickable in Windows Terminal, iTerm2, gnome-terminal,
+# kitty, wezterm. Falls back to plain text in older terminals (conhost.exe).
+function New-Hyperlink([string]$Url, [string]$Text) {
+  $esc = [char]27
+  return "$esc]8;;$Url$esc\$Text$esc]8;;$esc\"
+}
+
 function Prompt-TavilyKey {
   if (-not [Environment]::UserInteractive) { return $false }
   Write-Host ""
   Write-Host "  Set up web search (Tavily)" -ForegroundColor White
   Write-Host "  ----------------------------------------------------" -ForegroundColor DarkGray
-  Write-Host "  Free tier 1000 queries/mo, AI-agent-friendly (no per-second cap)." -ForegroundColor DarkGray
-  Write-Host "  Sign up: https://app.tavily.com   (no card required)" -ForegroundColor DarkGray
-  Write-Host "  Press Enter to skip (you can set it later by writing it to $TavilyKeyFile)." -ForegroundColor DarkGray
+  Write-Host "  Optional - gives the model real web search through an MCP server" -ForegroundColor DarkGray
+  Write-Host "  scoped to claudr only. " -NoNewline -ForegroundColor DarkGray
+  Write-Host "1000 queries/month free" -NoNewline -ForegroundColor White
+  Write-Host ", no per-second cap." -ForegroundColor DarkGray
+  Write-Host ""
+  Write-Host "  New here?" -ForegroundColor DarkGray
+  Write-Host "  1. Sign up: " -NoNewline -ForegroundColor Yellow
+  Write-Host (New-Hyperlink 'https://app.tavily.com' 'https://app.tavily.com') -NoNewline -ForegroundColor Cyan
+  Write-Host "  (no credit card)" -ForegroundColor DarkGray
+  Write-Host "  2. Copy the API key from the dashboard" -ForegroundColor Yellow
+  Write-Host "  3. Paste it below" -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "  Press Enter to skip" -NoNewline -ForegroundColor Yellow
+  Write-Host " (you can set it later by writing it to $TavilyKeyFile)." -ForegroundColor DarkGray
   Write-Host ""
   $k = (Read-Host "  Key").Trim()
   if (-not $k) {
@@ -123,8 +141,16 @@ function Read-AndSaveApiKey {
     Write-Host "$KeyFile  " -NoNewline
     Write-Host "(will be replaced)" -ForegroundColor DarkGray
   }
-  Write-Host "  Get a key at: " -NoNewline -ForegroundColor DarkGray
-  Write-Host "https://openrouter.ai/keys" -ForegroundColor Cyan
+  Write-Host "  New here?" -ForegroundColor DarkGray
+  Write-Host "  1. Sign up:    " -NoNewline -ForegroundColor Yellow
+  Write-Host (New-Hyperlink 'https://openrouter.ai/sign-up' 'https://openrouter.ai/sign-up') -ForegroundColor Cyan
+  Write-Host "  2. Create key: " -NoNewline -ForegroundColor Yellow
+  Write-Host (New-Hyperlink 'https://openrouter.ai/keys' 'https://openrouter.ai/keys') -ForegroundColor Cyan
+  Write-Host "  3. Preload a few `$ of credit, or pick a free model later (look for " -NoNewline -ForegroundColor Yellow
+  Write-Host ":free" -NoNewline -ForegroundColor White
+  Write-Host " suffix)" -ForegroundColor Yellow
+  Write-Host "  Already have a key? " -NoNewline -ForegroundColor DarkGray
+  Write-Host "Paste it below."
   Write-Host "  Press " -NoNewline -ForegroundColor DarkGray
   Write-Host "Enter" -NoNewline -ForegroundColor Yellow
   Write-Host " on empty to cancel." -ForegroundColor DarkGray
