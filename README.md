@@ -157,11 +157,11 @@ The first time you run `claudr`, it opens a 3-pick wizard in the fzf picker:
 ```
 ╭─ claudr · 1/3 · OPUS (main) ─────────────────────────────────────────╮
 │   ↑↓ navigate   ⏎ confirm   ⌃A change key   esc cancel               │
-│   search ›                                                            │
+│   search ›                                                           │
 │ ▶ #1   qwen/qwen3.7-max          1M ctx     $4.00 / $20.00 /M        │
 │   #2   anthropic/claude-opus-4.7 1M ctx     $5.00 / $25.00 /M        │
-│   ...                                                                 │
-╰───────────────────────────────────────────────────────────────────────╯
+│   ...                                                                │
+╰──────────────────────────────────────────────────────────────────────╯
 ```
 
 1. **OPUS (main)**: your default model. Every session runs on this unless
