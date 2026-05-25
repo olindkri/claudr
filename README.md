@@ -17,8 +17,9 @@ That's the whole product.
 claudr
 ```
 
-Pay-as-you-go billing, no proxy server, no per-model setup, no config
-files to hand-edit.
+Pay-as-you-go billing (and OpenRouter ships **free model variants** good
+enough for full Claude Code sessions — see [below](#free-models-that-handle-the-claude-code-agentic-flow)).
+No proxy server, no per-model setup, no config files to hand-edit.
 
 ---
 
@@ -44,9 +45,33 @@ claudr
 
 First launch walks you through:
 
-1. **OpenRouter API key** ([get one here](https://openrouter.ai/keys)) — required.
-2. **Tavily API key** ([get one here](https://app.tavily.com), 1000 free queries/month) — optional, gives the model web search.
-3. **Three picks** — your default model, mid-tier subagent model, and fast/background model. Pick whatever you like; you can change it any time with `claudr --tiers`.
+1. **OpenRouter API key** — required.
+   - Sign up: [openrouter.ai](https://openrouter.ai/sign-up)
+   - Create a key: [openrouter.ai/keys](https://openrouter.ai/keys)
+   - Pay-as-you-go (preload credits) — most coding-capable models are
+     a few cents per million tokens; some are **free**, see below.
+2. **Tavily API key** — optional, gives the model web search.
+   - Sign up: [app.tavily.com](https://app.tavily.com) (no credit card)
+   - **1000 queries/month free**, no per-second rate cap. Press Enter
+     to skip if you don't want web search.
+3. **Three picks** — your default model, mid-tier subagent model, and
+   fast/background model. Change any time with `claudr --tiers`.
+
+### Free models that handle the Claude Code agentic flow
+
+OpenRouter offers free variants of many models — usable for full
+Claude Code sessions, tool use included. Look for the **`:free`** suffix
+in the picker (or fuzzy-search for it). As of writing, these handle
+Anthropic's tool schema well enough for real agentic work:
+
+- `deepseek/deepseek-v4-flash:free` — fast, surprisingly good at tool use
+- `z-ai/glm-5.1:free` — solid all-rounder
+- `qwen/qwen3-coder-plus:free` — coding-tuned
+- `meta-llama/llama-4-scout:free` — long context, decent reasoning
+
+Free tiers are rate-limited and may queue under load — for hobby use it's
+fine; for daily heavy use, add a few dollars of OpenRouter credit and
+pick a paid model that fits your budget.
 
 Re-run the install command later to update. Keys are saved to
 `~/.config/claudr/` on macOS/Linux and `%USERPROFILE%\.claudr\` on Windows.
