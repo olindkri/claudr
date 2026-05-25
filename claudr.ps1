@@ -273,9 +273,10 @@ function Find-BraceEnd([string]$s, [int]$start) {
 
 # Output TSV: id\tctx\tprice\tname\trank\ttokens\tdesc — same schema as bash version
 function Get-RankedTsv([string]$view) {
-  $cache = Join-Path $ConfigDir "rankings.v2.$view.tsv"
+  $cache = Join-Path $ConfigDir "rankings.v3.$view.tsv"
   if (-not $Refresh -and (Get-CacheAgeHours $cache) -lt 6) {
-    return Get-Content $cache
+    $cached = Get-Content $cache
+    if ($cached -and $cached.Count -gt 0) { return $cached }
   }
   $catalog = Get-Catalog
   $idSet    = @{}; foreach ($m in $catalog) { $idSet[$m.id] = $true }
@@ -340,6 +341,37 @@ function Get-RankedTsv([string]$view) {
     }
     $lines.Add(("{0}`t{1}`t{2:F2}`t{3}`t{4}`t{5}`t{6}" -f $cid, $ctx, $pm, $mm.name, $rank, $tokB, $desc))
   }
+
+  # Fallback: OpenRouter now loads ranking data client-side, so the HTML scrape
+  # finds zero tokens. Build a curated picker from the catalog so the user still
+  # gets a usable model list. Mirrors the bash launcher's fallback.
+  if ($tokens.Count -eq 0) {
+    $curated = @(
+      'anthropic/claude-sonnet-4.6','anthropic/claude-opus-4.7','anthropic/claude-haiku-4.5',
+      'moonshotai/kimi-k2.6','moonshotai/kimi-k2-thinking',
+      'deepseek/deepseek-v4-pro','deepseek/deepseek-v4-flash',
+      'openai/gpt-5','google/gemini-2.5-pro','google/gemma-4-31b-it',
+      'qwen/qwen3.6-plus','qwen/qwen3-coder-plus',
+      'x-ai/grok-4.3','z-ai/glm-5.1','minimax/minimax-m2.7','meta-llama/llama-4-scout'
+    )
+    $cRank = 0
+    foreach ($cid in $curated) {
+      if (-not $meta.ContainsKey($cid)) { continue }
+      $cRank++
+      $mm = $meta[$cid]
+      $ctx = if ($mm.context_length) { [int64]$mm.context_length } else { 0 }
+      $pm = 0.0
+      try { if ($mm.pricing.prompt) { $pm = [double]$mm.pricing.prompt * 1e6 } } catch {}
+      $desc = ($mm.description -replace "[\r\n\t]"," ").Trim()
+      if ($desc.Length -gt 160) {
+        $cut = $desc.IndexOf(". ")
+        if ($cut -gt 0 -and $cut -lt 180) { $desc = $desc.Substring(0, $cut + 1) }
+        else { $desc = $desc.Substring(0, 160).TrimEnd() + "…" }
+      }
+      $lines.Add(("{0}`t{1}`t{2:F2}`t{3}`t{4}`t{5}`t{6}" -f $cid, $ctx, $pm, $mm.name, $cRank, "-", $desc))
+    }
+  }
+
   $lines | Set-Content $cache
   return $lines
 }
