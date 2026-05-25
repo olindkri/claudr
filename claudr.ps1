@@ -61,10 +61,19 @@ function Prompt-TavilyKey {
 
 # One-time: remove any user-scope Tavily registration left over from earlier
 # launcher versions (which registered globally and leaked into other claude sessions).
+# `claude mcp remove` writes "No user-scoped MCP server found" to stderr when
+# the server isn't registered — harmless, but $ErrorActionPreference='Stop'
+# escalates that into a terminating error. Localise the override here.
 if (-not (Test-Path $GlobalCleanupMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
-  foreach ($name in @('tavily','tavily-search','ddg-search','brave-search')) {
-    & claude mcp remove -s user $name *> $null
-  }
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'SilentlyContinue'
+  try {
+    foreach ($name in @('tavily','tavily-search','ddg-search','brave-search')) {
+      & claude mcp remove -s user $name 2>&1 | Out-Null
+    }
+  } catch { }
+  $ErrorActionPreference = $prevEAP
+  $global:LASTEXITCODE = 0
   New-Item -ItemType File -Path $GlobalCleanupMarker -Force | Out-Null
 }
 
