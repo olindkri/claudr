@@ -1,4 +1,4 @@
-# claudr.ps1 — launch Claude Code routed through OpenRouter,
+﻿# claudr.ps1 — launch Claude Code routed through OpenRouter,
 # with a model picker driven by OpenRouter's live programming leaderboard.
 #
 # Usage:
