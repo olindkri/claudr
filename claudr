@@ -495,23 +495,17 @@ print_table() {
 # Display columns are tab-separated; fzf shows column 2, returns full line so
 # the caller can pull the canonical id from column 1. Column 3 holds preview
 # text with literal "\n" sequences expanded by printf '%b' in --preview.
-# Cache fzf's reported version once per script run so the picker can decide
-# which modern flags it can safely pass without erroring on older builds.
-_fzf_version_cached=""
-fzf_supports() {
-  # Returns 0 if `fzf --version` reports >= "$1.$2" (e.g. fzf_supports 0 42).
-  local need_major="$1" need_minor="$2"
-  if [ -z "$_fzf_version_cached" ]; then
-    _fzf_version_cached="$(fzf --version 2>/dev/null | awk '{print $1}')"
+# Cache fzf's help text once so we can probe which flags this build actually
+# supports. More reliable than a version comparison — some distro-patched forks
+# report a recent version but ship without certain options (e.g. --gutter).
+_fzf_help_cached=""
+fzf_has_flag() {
+  # fzf_has_flag --gutter  →  0 if `fzf --help` mentions that flag, else 1
+  local flag="$1"
+  if [ -z "$_fzf_help_cached" ]; then
+    _fzf_help_cached="$(fzf --help 2>&1 || true)"
   fi
-  local v="$_fzf_version_cached"
-  local major="${v%%.*}"
-  local rest="${v#*.}"
-  local minor="${rest%%.*}"
-  [ -n "$major" ] && [ -n "$minor" ] || return 1
-  if [ "$major" -gt "$need_major" ]; then return 0; fi
-  if [ "$major" -eq "$need_major" ] && [ "$minor" -ge "$need_minor" ]; then return 0; fi
-  return 1
+  printf %s "$_fzf_help_cached" | grep -q -- "$flag"
 }
 
 fzf_pick() {
@@ -524,9 +518,8 @@ fzf_pick() {
   else
     border_text=" claudr · $tier_label "
   fi
-  # Build the flag list incrementally so older fzf builds don't fail on
-  # modern flags. --gutter / --highlight-line / --info=inline-right /
-  # --border-label / --preview-label-pos all need fzf 0.42+ (Apr 2023).
+  # Build the flag list incrementally — probe each modern flag against
+  # `fzf --help` so distro-patched builds missing a flag don't break the picker.
   local -a fzf_opts=(
     --ansi --reverse
     --pointer='▶' --marker=' '
@@ -541,16 +534,12 @@ fzf_pick() {
     --preview="printf '%b' {3}"
     --color='border:cyan:dim,label:cyan:bold,header:dim,prompt:cyan:bold,pointer:cyan:bold,marker:cyan,bg+:236,fg+:bright-white:bold,hl+:bright-cyan:bold,current-bg:236,current-fg:bright-white:bold,current-hl:bright-cyan:bold,hl:cyan,info:dim,separator:cyan:dim,preview-border:cyan:dim,preview-label:cyan:bold'
   )
-  if fzf_supports 0 42; then
-    fzf_opts+=(
-      --border=rounded
-      --border-label="$border_text" --border-label-pos=3
-      --info=inline-right
-      --highlight-line
-      --gutter=' '
-      --preview-label=' details ' --preview-label-pos=3
-    )
-  fi
+  fzf_has_flag --border         && fzf_opts+=(--border=rounded)
+  fzf_has_flag --border-label   && fzf_opts+=(--border-label="$border_text" --border-label-pos=3)
+  fzf_has_flag --info           && fzf_opts+=(--info=inline-right)
+  fzf_has_flag --highlight-line && fzf_opts+=(--highlight-line)
+  fzf_has_flag --gutter         && fzf_opts+=(--gutter=' ')
+  fzf_has_flag --preview-label  && fzf_opts+=(--preview-label=' details ' --preview-label-pos=3)
   python3 - "$tsv" <<'PY' | fzf "${fzf_opts[@]}"
 import sys
 B="\033[1m"; C="\033[36m"; D="\033[2m"; Y="\033[33m"; G="\033[32m"; W="\033[97m"; R="\033[0m"
