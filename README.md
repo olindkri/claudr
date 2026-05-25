@@ -101,6 +101,11 @@ context length, and price from the catalog. Both feeds are cached for 6h.
 
 ## Usage
 
+> **Windows flag syntax**: Examples below use bash style (`--tiers`, `--preset`,
+> `-p`). The Windows PowerShell launcher uses single-dash PowerShell style:
+> `-Tiers`, `-Preset`, `-Ask`, `-Doctor`, `-Presets`, `-List`, `-Refresh`, `-Model`.
+> Same semantics, idiomatic per shell.
+
 ```bash
 claudr                          # launch with your saved tier config (first run: setup wizard)
 claudr --tiers                  # re-pick the 3 tier models (opus/sonnet/haiku)
