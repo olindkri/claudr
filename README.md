@@ -343,25 +343,60 @@ claudr usage under one label. Override with `CLAUDR_REFERER` /
 
 ---
 
-## Web search (Tavily, scoped to this launcher)
+## Web search & URL fetching (Tavily, scoped to this launcher)
 
-Claude Code's built-in `WebSearch` tool runs server-side on Anthropic's
-infrastructure, so it doesn't work on OpenRouter models. claudr injects
-**Tavily as an MCP server only for claudr launches** — passed via
-`--mcp-config`, never registered globally. Other `claude` invocations on
-the same machine (Ollama's launcher, plain `claude`, etc.) see no Tavily
-and use whatever search they had configured.
+Two of Claude Code's built-in tools — `WebSearch` and `WebFetch` — are
+problematic on OpenRouter. claudr replaces both with the **Tavily MCP
+server**, scoped to claudr launches only (passed via `--mcp-config`,
+never registered globally — other `claude` invocations on the same
+machine are unaffected).
 
-Free tier is **1000 queries/month** with no per-second rate cap.
+### Why both are replaced
 
-- **Sign up:** https://app.tavily.com (30 sec, no card required)
-- **Skip:** press Enter at the prompt — search is just unavailable until you set a key
-- **Rotate:** edit or delete `~/.claudr/tavily-key` (`%USERPROFILE%\.claudr\tavily-key` on Windows) and re-launch
+- **`WebSearch`** runs server-side on Anthropic's infrastructure. It's a
+  no-op when you point Claude Code at OpenRouter. claudr always disables
+  it (opt back in with `CLAUDR_ALLOW_WEBSEARCH=1`).
+- **`WebFetch`** internally calls a "small fast model" (your HAIKU tier)
+  to summarize fetched pages. On non-Anthropic HAIKU tiers — deepseek,
+  qwen, kimi, etc. — that internal call fails silently with "No response
+  from model" because the provider doesn't return the response shape
+  Claude Code expects. claudr disables WebFetch whenever Tavily is
+  configured (opt back in with `CLAUDR_ALLOW_WEBFETCH=1`).
+
+### What Tavily MCP provides instead
+
+| Built-in tool | Tavily replacement | Behaves the same? |
+|---------------|---------------------|--------------------|
+| `WebSearch`   | `tavily_search`     | Yes — better even (real search results, snippets, dates) |
+| `WebFetch`    | `tavily_extract`    | Different in one way: returns **raw cleaned page content** instead of WebFetch's AI-summarized version. Larger context, more faithful. |
+
+In practice the model picks the Tavily tool automatically when only one
+is visible. For agentic work, raw content (Tavily) is generally better —
+the model decides what's relevant rather than getting a pre-filtered
+summary from a separate Haiku call. Trade-off: a single `tavily_extract`
+of a long article uses ~5-10k tokens vs. WebFetch's ~1k summary.
+
+### Free tier
+
+**1000 queries/month** with no per-second rate cap, no credit card.
+Realistic usage: one or two fetches per coding task → you won't run out.
+Aggressive scraping → upgrade tier or set `CLAUDR_ALLOW_WEBFETCH=1` to
+fall back to (broken) WebFetch.
+
+### Setup
+
+- **Sign up:** https://app.tavily.com (30 sec, no card required) — the
+  first-launch prompt has a clickable link
+- **Skip:** press Enter at the prompt — both search and URL fetching
+  are unavailable until you set a key
+- **Rotate:** edit or delete `~/.config/claudr/tavily-key`
+  (`%USERPROFILE%\.claudr\tavily-key` on Windows) and re-launch
 
 Under the hood: the key is saved per-platform; on every launch claudr
 writes an `mcp.json` pointing at Tavily's hosted remote MCP and passes
 that file via `claude --mcp-config`. It also passes `--disallowedTools
-WebSearch` so the model can't pick the no-op Anthropic tool over Tavily.
+WebSearch WebFetch` (when both should be disabled) so the model only
+sees the working Tavily tools.
 
 ---
 
