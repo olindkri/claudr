@@ -402,6 +402,7 @@ so Claude Code auto-compacts at 75% of its 200K assumption.
 | `CLAUDR_AUTOCOMPACT=1` env var     | off            | Re-enable Claude Code's auto-compaction (pins window at 200K)               |
 | `CLAUDR_SAFE=1` env var            | off            | Don't pass `--dangerously-skip-permissions` to claude                       |
 | `CLAUDR_ALLOW_WEBSEARCH=1` env var | off            | Don't pass `--disallowedTools WebSearch` (lets the no-op tool show up)      |
+| `CLAUDR_ALLOW_WEBFETCH=1` env var  | off            | Re-enable WebFetch (auto-disabled when Tavily MCP is configured — Tavily's `tavily_extract` does the same job and works on non-Anthropic models, where WebFetch's internal Haiku call fails silently) |
 | `TAVILY_API_KEY` env var           | —              | Use this Tavily key for the web-search MCP instead of the saved file       |
 | `CLAUDR_STATUSLINE=0` env var      | on             | Disable claudr's statusline (use your own `claude` settings.json instead)  |
 | `CLAUDR_BANNER=1` env var          | auto           | Force-show the launch banner (normally hidden in `-p` / `--ask` modes)     |
@@ -435,6 +436,7 @@ Start with `claudr --doctor`.
 | Want to swap your OpenRouter key                 | Press **Ctrl+A** inside the picker, or delete `~/.config/claudr/key` |
 | Web search not working                           | Set `TAVILY_API_KEY` or write the key to `~/.config/claudr/tavily-key` |
 | `claudr -p "..."` returns empty in older versions | Update — claudr auto-routes around [claude-code#38805](https://github.com/anthropics/claude-code/issues/38805); set `CLAUDR_RAW_PRINT=1` to opt out |
+| WebFetch returns "No response from model"        | Tavily's `tavily_extract` does the same thing reliably; claudr auto-disables WebFetch when Tavily is configured. Set `CLAUDR_ALLOW_WEBFETCH=1` to re-enable, or set HAIKU tier to `anthropic/claude-haiku-4.5` |
 | Statusline clashes with your own                 | `CLAUDR_STATUSLINE=0 claudr`                           |
 | `unknown option: --gutter` (or similar fzf error)| Your fzf is too old or distro-patched; claudr probes per-flag, so just update to fzf 0.42+ |
 

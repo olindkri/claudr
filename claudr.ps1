@@ -900,9 +900,17 @@ if ($env:CLAUDR_AUTOCOMPACT -eq '1') {
   $CompactState = 'off - run /compact manually'
 }
 
-# Disable Anthropic's server-side WebSearch tool (no-op on OpenRouter).
+# Disable Anthropic's server-side WebSearch (no-op on OpenRouter) and
+# WebFetch when Tavily is configured. WebFetch makes an internal "small fast
+# model" summarization call that needs Anthropic response shape; on non-
+# Anthropic HAIKU tiers it fails silently with "No response from model".
+# tavily_extract (already exposed by the Tavily MCP) does the same job.
+# Opt outs: CLAUDR_ALLOW_WEBSEARCH=1, CLAUDR_ALLOW_WEBFETCH=1.
+$DisallowList = @()
+if ($env:CLAUDR_ALLOW_WEBSEARCH -ne '1') { $DisallowList += 'WebSearch' }
+if ((Test-Path $McpConfigFile) -and $env:CLAUDR_ALLOW_WEBFETCH -ne '1') { $DisallowList += 'WebFetch' }
 $DisallowArgs = @()
-if ($env:CLAUDR_ALLOW_WEBSEARCH -ne '1') { $DisallowArgs = @('--disallowedTools','WebSearch') }
+if ($DisallowList.Count -gt 0) { $DisallowArgs = @('--disallowedTools') + $DisallowList }
 
 # Inject Tavily MCP for this launch only.
 $McpArgs = @()
@@ -975,7 +983,9 @@ else         { Write-Host "claudr | $model | ctx $ctx | $short"           -NoNew
 if ($ShowBanner) {
   $mainNote = if ($Model -eq $OpusModel) { ' = opus' } else { '' }
   $perms    = if ($env:CLAUDR_SAFE -eq '1') { 'prompted' } else { 'bypassed  (CLAUDR_SAFE=1 to enable)' }
-  $search   = if ($DisallowArgs.Count -gt 0) { 'Tavily MCP  (WebSearch disabled)' } elseif (Test-Path $McpConfigFile) { 'Tavily MCP + WebSearch' } else { 'none' }
+  $hasMcp   = Test-Path $McpConfigFile
+  $disText  = if ($DisallowList.Count -gt 0) { "(disabled: " + ($DisallowList -join ', ') + ")" } else { '' }
+  $search   = if ($hasMcp -and $disText) { "Tavily MCP  $disText" } elseif ($hasMcp) { 'Tavily MCP' } elseif ($disText) { "none  $disText" } else { 'none' }
   Write-Host ""
   Write-Host "  claudr" -NoNewline -ForegroundColor Cyan
   Write-Host "  - OpenRouter routing for Claude Code" -ForegroundColor DarkGray

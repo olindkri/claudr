@@ -1055,9 +1055,22 @@ if [ "${CLAUDR_SAFE:-0}" = "1" ]; then SKIP_PERM_FLAG=""; fi
 # Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
 # (Anthropic-only beta capability), and if it's visible the model picks it over
 # the Tavily MCP we register. Opt out with CLAUDR_ALLOW_WEBSEARCH=1.
+#
+# Also disable WebFetch when Tavily is configured: WebFetch makes an internal
+# "small fast model" summarization call that needs Anthropic response shape;
+# on non-Anthropic HAIKU tiers it fails silently with "No response from model".
+# tavily_extract (already exposed by the Tavily MCP) does the same job and
+# works reliably. Opt out with CLAUDR_ALLOW_WEBFETCH=1.
 DISALLOW_FLAGS=()
+disallow_tools=()
 if [ "${CLAUDR_ALLOW_WEBSEARCH:-0}" != "1" ]; then
-  DISALLOW_FLAGS=(--disallowedTools WebSearch)
+  disallow_tools+=(WebSearch)
+fi
+if [ -f "$MCP_CONFIG_FILE" ] && [ "${CLAUDR_ALLOW_WEBFETCH:-0}" != "1" ]; then
+  disallow_tools+=(WebFetch)
+fi
+if [ ${#disallow_tools[@]} -gt 0 ]; then
+  DISALLOW_FLAGS=(--disallowedTools "${disallow_tools[@]}")
 fi
 
 # Inject Tavily MCP for this launch only. Other `claude` invocations on this
@@ -1180,9 +1193,15 @@ if [ "$SHOW_BANNER" = "1" ]; then
   if [ -n "$SKIP_PERM_FLAG" ]; then PERMS="${Y}bypassed${R}  ${D}CLAUDR_SAFE=1 to enable${R}"
   else                              PERMS="${G}prompted${R}"
   fi
-  if [ ${#DISALLOW_FLAGS[@]} -gt 0 ]; then WEBSEARCH="${G}Tavily MCP${R}  ${D}(WebSearch disabled)${R}"
-  elif [ -f "$MCP_CONFIG_FILE" ];     then WEBSEARCH="${G}Tavily MCP + WebSearch${R}"
-  else                                     WEBSEARCH="${D}none${R}"
+  disabled_list="${disallow_tools[*]:-}"
+  if [ -f "$MCP_CONFIG_FILE" ] && [ -n "$disabled_list" ]; then
+    WEBSEARCH="${G}Tavily MCP${R}  ${D}(disabled: ${disabled_list// /, })${R}"
+  elif [ -f "$MCP_CONFIG_FILE" ]; then
+    WEBSEARCH="${G}Tavily MCP${R}"
+  elif [ -n "$disabled_list" ]; then
+    WEBSEARCH="${D}none  (disabled: ${disabled_list// /, })${R}"
+  else
+    WEBSEARCH="${D}none${R}"
   fi
 
   # mark "main = opus" so users see the alias relationship
