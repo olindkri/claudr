@@ -118,6 +118,8 @@ claudr --tiers coding           # save tier picks as a named preset
 claudr --preset coding          # launch with a named preset
 claudr --presets                # list saved presets and exit
 claudr -m kimi                  # override only the main model
+claudr --solo kimi              # run every tier (opus/sonnet/haiku) on one model
+claudr --solo                   # same, but pick the one model interactively (alias: -1)
 claudr -p "summarize file.md"   # one-shot, returns just the text reply
 claudr --ask "what is 2+2?"     # explicit non-interactive form
 claudr --doctor                 # health-check CLI, key, fzf, slugs, caches
@@ -242,6 +244,7 @@ get routed automatically.
 | `CLAUDR_SONNET_MODEL=<slug> claudr`     | Override sonnet tier for this launch only       |
 | `CLAUDR_HAIKU_MODEL=<slug> claudr`      | Override haiku tier for this launch only        |
 | `claudr -m <slug>`                      | Override main model only; tiers stay as configured |
+| `claudr --solo <slug>`                  | Force **every** tier (opus/sonnet/haiku) onto one model |
 | `claudr --preset <name>`                | Use a named preset instead of the default tier config |
 
 Example: run with saved config but swap opus to GPT-5 just for this session:
@@ -249,6 +252,25 @@ Example: run with saved config but swap opus to GPT-5 just for this session:
 ```bash
 CLAUDR_OPUS_MODEL=openai/gpt-5 claudr
 ```
+
+### Run on a single model (`--solo`)
+
+Sometimes you don't want a three-tier mix — you want one model handling the
+main session *and* every subagent (opus/sonnet/haiku). `--solo` does exactly
+that, ignoring any saved preset, tier config, and `CLAUDR_*_MODEL` env vars:
+
+```bash
+claudr --solo kimi              # all tiers → moonshotai/kimi-k2.6
+claudr --solo openai/gpt-5      # all tiers → a full slug
+claudr --solo                   # pick the one model from the leaderboard (alias: -1)
+```
+
+With no model argument, `--solo` falls back to `-m` if given, then to an
+interactive picker, then (non-interactive) to a safe default. The launch banner
+shows the model marked `= solo (all tiers)` so you know the mode is active.
+
+> **PowerShell**: `-Solo` is a switch and takes its model from `-Model`:
+> `claudr -Solo -Model kimi`, or `claudr -Solo` for the interactive picker.
 
 ---
 

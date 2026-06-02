@@ -8,6 +8,8 @@
 #   claudr -Preset coding           # launch with a named preset
 #   claudr -Presets                 # list saved presets, exit
 #   claudr -Model kimi              # override only the main model for this launch
+#   claudr -Solo -Model kimi        # run every tier (opus/sonnet/haiku) on one model
+#   claudr -Solo                    # same, but pick the one model interactively
 #   claudr -Ask "your prompt"       # one-shot non-interactive: prints just the reply
 #   claudr -Doctor                  # health check: claude, fzf, key, tier slugs, caches
 #   claudr -List                    # print top N, exit
@@ -19,6 +21,7 @@
 param(
   [string]$Model = $env:OPENROUTER_MODEL,
   [string]$Preset,
+  [switch]$Solo,
   [switch]$Tiers,
   [switch]$Presets,
   [switch]$Doctor,
@@ -802,7 +805,23 @@ if ($ListAll) {
 # --- tier resolution ---
 $OpusModel = ''; $SonnetModel = ''; $HaikuModel = ''
 $ActivePreset = ''
-if ($Preset) {
+if ($Solo) {
+  # -Solo: run every tier on a single model. No preset, no wizard, no fanout.
+  # Source order: -Model <slug> > interactive pick > fallback.
+  $soloPick = $Model
+  if (-not $soloPick -and [Environment]::UserInteractive -and (Get-Command fzf -ErrorAction SilentlyContinue)) {
+    $rows = Get-CombinedTsv $View $Top
+    if ($rows -and $rows.Count -gt 0) {
+      $pick = Invoke-FzfPicker -Rows $rows -TierLabel 'SOLO (all tiers)'
+      $soloPick = $pick.Id
+    }
+    if (-not $soloPick) { Write-Error "claudr: solo selection cancelled."; exit 1 }
+  }
+  if (-not $soloPick) { $soloPick = 'moonshotai/kimi-k2.6' }  # non-interactive fallback
+  $soloPick = Resolve-Model $soloPick
+  $OpusModel = $soloPick; $SonnetModel = $soloPick; $HaikuModel = $soloPick
+  $Model = $soloPick
+} elseif ($Preset) {
   $vals = Load-Tiers $Preset
   if (-not $vals) {
     Write-Error "claudr: preset '$Preset' not found at $(Get-PresetPath $Preset)`n  list presets: claudr -Presets`n  create one:   claudr -Tiers -Preset $Preset"
@@ -817,10 +836,12 @@ if ($Preset) {
   }
 }
 
-# Per-launch env overrides
-if ($env:CLAUDR_OPUS_MODEL)   { $OpusModel   = $env:CLAUDR_OPUS_MODEL }
-if ($env:CLAUDR_SONNET_MODEL) { $SonnetModel = $env:CLAUDR_SONNET_MODEL }
-if ($env:CLAUDR_HAIKU_MODEL)  { $HaikuModel  = $env:CLAUDR_HAIKU_MODEL }
+# Per-launch env overrides. Skipped under -Solo (explicit "one model everywhere").
+if (-not $Solo) {
+  if ($env:CLAUDR_OPUS_MODEL)   { $OpusModel   = $env:CLAUDR_OPUS_MODEL }
+  if ($env:CLAUDR_SONNET_MODEL) { $SonnetModel = $env:CLAUDR_SONNET_MODEL }
+  if ($env:CLAUDR_HAIKU_MODEL)  { $HaikuModel  = $env:CLAUDR_HAIKU_MODEL }
+}
 
 # Fill any missing tier from -Model fanout or run the wizard
 if (-not $OpusModel -or -not $SonnetModel -or -not $HaikuModel) {
@@ -981,7 +1002,7 @@ else         { Write-Host "claudr | $model | ctx $ctx | $short"           -NoNew
 
 # --- banner ---
 if ($ShowBanner) {
-  $mainNote = if ($Model -eq $OpusModel) { ' = opus' } else { '' }
+  $mainNote = if ($Solo) { ' = solo (all tiers)' } elseif ($Model -eq $OpusModel) { ' = opus' } else { '' }
   $perms    = if ($env:CLAUDR_SAFE -eq '1') { 'prompted' } else { 'bypassed  (CLAUDR_SAFE=1 to enable)' }
   $hasMcp   = Test-Path $McpConfigFile
   $disText  = if ($DisallowList.Count -gt 0) { "(disabled: " + ($DisallowList -join ', ') + ")" } else { '' }

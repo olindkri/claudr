@@ -10,6 +10,8 @@
 #   claudr --presets             # list saved presets and exit
 #   claudr -m kimi               # override only the main model for this launch
 #   claudr -m moonshotai/kimi-k2.6
+#   claudr --solo kimi           # run every tier (opus/sonnet/haiku) on one model
+#   claudr --solo                # same, but pick the one model interactively (-1 alias)
 #   claudr --list                # print top N, exit
 #   claudr --list -n 50          # top 50
 #   claudr --view month          # ranking window: day|week|month|trending
@@ -241,6 +243,8 @@ TIERS_WIZARD=0
 DOCTOR_MODE=0
 PRESETS_LIST=0
 PRESET_NAME=""
+SOLO_MODE=0
+SOLO_MODEL=""
 WIZARD_TARGET=""
 ASK_PROMPT=""
 ASK_MODE=0
@@ -259,6 +263,15 @@ while [ $# -gt 0 ]; do
       ;;
     --preset)    PRESET_NAME="$2"; shift 2 ;;
     --presets)   PRESETS_LIST=1; shift ;;
+    --solo|-1)
+      SOLO_MODE=1
+      # Optional model: --solo <model>  (skips if next is a flag or absent)
+      if [ $# -ge 2 ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+        SOLO_MODEL="$2"; shift 2
+      else
+        shift
+      fi
+      ;;
     --doctor)    DOCTOR_MODE=1; shift ;;
     --ask)       ASK_MODE=1; ASK_PROMPT="$2"; shift 2 ;;
     --list)      LIST_MODE="ranked"; shift ;;
@@ -909,7 +922,27 @@ fi
 # Resolution: env var > preset (-p) > tiers.conf > first-launch wizard > -m fanout > fallback
 OPUS_MODEL=""; SONNET_MODEL=""; HAIKU_MODEL=""
 ACTIVE_PRESET=""
-if [ -n "$PRESET_NAME" ]; then
+if [ "$SOLO_MODE" = "1" ]; then
+  # --solo: run every tier on a single model. No preset, no wizard, no fanout
+  # subtleties — opus/sonnet/haiku and the main session all point at one slug.
+  # Source order: --solo <model> > -m <model> > interactive pick > fallback.
+  solo_pick="$SOLO_MODEL"
+  [ -z "$solo_pick" ] && solo_pick="$MODEL"
+  if [ -z "$solo_pick" ] && [ -t 0 ] && [ -t 1 ] && command -v fzf >/dev/null 2>&1; then
+    tmplist="$(mktemp)"
+    fetch_combined_tsv "$RANK_VIEW" "$TOP_N" > "$tmplist" || true
+    if [ -s "$tmplist" ]; then
+      solo_out="$(fzf_pick "$tmplist" "SOLO (all tiers)")"
+      solo_pick="$(printf %s "$solo_out" | tail -n +2 | head -n1 | cut -f1)"
+    fi
+    rm -f "$tmplist"
+    [ -z "$solo_pick" ] && { echo "claudr: solo selection cancelled." >&2; exit 1; }
+  fi
+  [ -z "$solo_pick" ] && solo_pick="moonshotai/kimi-k2.6"  # non-interactive fallback
+  solo_pick="$(resolve_model "$solo_pick")"
+  OPUS_MODEL="$solo_pick"; SONNET_MODEL="$solo_pick"; HAIKU_MODEL="$solo_pick"
+  MODEL="$solo_pick"
+elif [ -n "$PRESET_NAME" ]; then
   if load_tiers "$PRESET_NAME"; then
     ACTIVE_PRESET="$PRESET_NAME"
   else
@@ -922,10 +955,13 @@ else
   load_tiers "" || true   # legacy default; leaves vars blank if missing
 fi
 
-# Per-launch env overrides (highest precedence)
-[ -n "${CLAUDR_OPUS_MODEL:-}" ]   && OPUS_MODEL="$CLAUDR_OPUS_MODEL"
-[ -n "${CLAUDR_SONNET_MODEL:-}" ] && SONNET_MODEL="$CLAUDR_SONNET_MODEL"
-[ -n "${CLAUDR_HAIKU_MODEL:-}" ]  && HAIKU_MODEL="$CLAUDR_HAIKU_MODEL"
+# Per-launch env overrides (highest precedence). Skipped under --solo, which is
+# an explicit "one model everywhere" request that should beat per-tier env vars.
+if [ "$SOLO_MODE" != "1" ]; then
+  [ -n "${CLAUDR_OPUS_MODEL:-}" ]   && OPUS_MODEL="$CLAUDR_OPUS_MODEL"
+  [ -n "${CLAUDR_SONNET_MODEL:-}" ] && SONNET_MODEL="$CLAUDR_SONNET_MODEL"
+  [ -n "${CLAUDR_HAIKU_MODEL:-}" ]  && HAIKU_MODEL="$CLAUDR_HAIKU_MODEL"
+fi
 
 # Still missing any tier? Either run the wizard (interactive), fan out -m, or fall back.
 if [ -z "$OPUS_MODEL" ] || [ -z "$SONNET_MODEL" ] || [ -z "$HAIKU_MODEL" ]; then
@@ -1204,8 +1240,12 @@ if [ "$SHOW_BANNER" = "1" ]; then
     WEBSEARCH="${D}none${R}"
   fi
 
-  # mark "main = opus" so users see the alias relationship
-  if [ "$MODEL" = "$OPUS_MODEL" ]; then MAIN_NOTE="${D} = opus${R}"; else MAIN_NOTE=""; fi
+  # mark "main = opus" so users see the alias relationship; in --solo mode all
+  # three tiers are the same slug, so call that out instead.
+  if [ "$SOLO_MODE" = "1" ]; then          MAIN_NOTE="${D} = solo (all tiers)${R}"
+  elif [ "$MODEL" = "$OPUS_MODEL" ]; then  MAIN_NOTE="${D} = opus${R}"
+  else                                     MAIN_NOTE=""
+  fi
 
   echo ""
   printf "  %s%sclaudr%s  %s· OpenRouter routing for Claude Code%s\n" "$B" "$C" "$R" "$D" "$R"
